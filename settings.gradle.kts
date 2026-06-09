@@ -12,9 +12,6 @@ pluginManagement {
 
 dependencyResolutionManagement {
     versionCatalogs {
-        create("libs") {
-            from(files("gradle/libs.versions.toml"))
-        }
         create("kei") {
             from(files("gradle/kei.versions.toml"))
         }
@@ -34,7 +31,7 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 rootProject.name = "Wizdier-AniRepo"
 
 /**
- * Add or remove modules to load as needed for local development here.
+ * Add or remove modules to load as needed here.
  */
 loadAllIndividualExtensions()
 
