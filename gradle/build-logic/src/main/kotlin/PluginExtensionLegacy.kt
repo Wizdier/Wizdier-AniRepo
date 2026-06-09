@@ -23,6 +23,8 @@ import org.gradle.kotlin.dsl.withType
 @Suppress("UNUSED")
 class PluginExtensionLegacy : Plugin<Project> {
     override fun apply(target: Project): Unit = with(target) {
+        val libs = libs
+        val kei = kei
         plugins {
             alias(libs.plugins.android.application)
             alias(libs.plugins.kotlin.serialization)

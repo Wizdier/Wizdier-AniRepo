@@ -13,6 +13,8 @@ import org.gradle.kotlin.dsl.dependencies
 @Suppress("UNUSED")
 class PluginMultiSrc : Plugin<Project> {
     override fun apply(target: Project): Unit = with(target) {
+        val libs = libs
+        val kei = kei
         plugins {
             alias(libs.plugins.android.library)
             alias(libs.plugins.kotlin.serialization)
@@ -22,19 +24,20 @@ class PluginMultiSrc : Plugin<Project> {
         }
 
         android {
-            namespace = "eu.kanade.tachiyomi.multisrc.${project.name}"
+            namespace = "aniyomi.multisrc.${project.name}"
 
             sourceSets {
                 named("main") {
-                    manifest.srcFile("AndroidManifest.xml")
+                    java.directories.clear()
+                    java.directories.add("src")
                     kotlin.directories.clear()
                     kotlin.directories.add("src")
-                    res.directories.clear()
-                    res.directories.add("res")
                     assets.directories.clear()
                     assets.directories.add("assets")
                 }
             }
+
+            androidResources.enable = false
         }
 
         dependencies {
