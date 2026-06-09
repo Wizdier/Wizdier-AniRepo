@@ -119,6 +119,7 @@ jobs:
           KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          chmod +x ./gradlew
           ./gradlew $MODULES
 
       - name: Upload APKs (${{ matrix.chunk.number }})

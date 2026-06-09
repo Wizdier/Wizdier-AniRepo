@@ -105,6 +105,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           MODULES: ${{ join(matrix.chunk.modules, ' ') }}
         run: |
+          chmod +x ./gradlew
           ./gradlew $MODULES
 
       - name: Upload APKs (${{ matrix.chunk.number }})
