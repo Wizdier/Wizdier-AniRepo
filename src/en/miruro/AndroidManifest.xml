@@ -8,8 +8,10 @@
             android:theme="@android:style/Theme.NoDisplay">
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
+
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+
                 <data
                     android:host="www.miruro.tv"
                     android:pathPrefix="/watch/"

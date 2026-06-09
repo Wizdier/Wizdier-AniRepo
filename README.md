@@ -1,26 +1,14 @@
 # Wizdier-AniRepo
 
-Aniyomi anime extension repository.
+Aniyomi / Anikku extension repo.
 
-## Extensions
+## Add to Aniyomi
+```
+https://raw.githubusercontent.com/Wizdier/Wizdier-AniRepo/main/index.min.json
+```
 
-| Extension | Lang | Version | 
-|-----------|------|---------|
-| Miruro.tv | en   | 3       |
-
-## Building
-
+## Building the APK
 ```bash
 ./gradlew :src:en:miruro:assembleRelease
 ```
-
-The APK will be at: `src/en/miruro/build/outputs/apk/release/`
-
-## Requirements
-
-- JDK 11+
-- Android SDK (compileSdk 34)
-
-## Credits
-
-Based on [yuzono/anime-extensions](https://github.com/yuzono/anime-extensions).
+APK output: `src/en/miruro/build/outputs/apk/release/`

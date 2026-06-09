@@ -13,8 +13,6 @@ import org.gradle.kotlin.dsl.dependencies
 @Suppress("UNUSED")
 class PluginLibrary : Plugin<Project> {
     override fun apply(target: Project): Unit = with(target) {
-        val libs = libs
-        val kei = kei
         plugins {
             alias(libs.plugins.android.library)
             alias(libs.plugins.kotlin.serialization)

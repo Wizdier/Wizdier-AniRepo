@@ -18,7 +18,7 @@ class PluginSpotless : Plugin<Project> {
         }
 
         // Configuration should be synced with [/gradle/build-logic/build.gradle.kts]
-        val ktlintVersion = libs.versions.ktlint.get().toString()
+        val ktlintVersion = libs.ktlint.bom.get().version
         spotless {
             kotlin {
                 target("src/**/*.kt", "*.kts")
