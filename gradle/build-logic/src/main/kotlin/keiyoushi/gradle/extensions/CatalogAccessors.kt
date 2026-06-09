@@ -27,7 +27,9 @@ class EagerProvider<T>(private val value: T) : Provider<T> {
         EagerProvider(transformer.transform(value))
     override fun <S : Any> flatMap(transformer: Transformer<out Provider<out S>?, in T>): Provider<S?> {
         @Suppress("UNCHECKED_CAST")
-        return (transformer.transform(value) as Provider<S>?) ?: EagerProvider(null as S?)
+        val result: Any? = transformer.transform(value)
+        return (result as Provider<S>?)
+            ?: EagerProvider<S?>(null).let { @Suppress("UNCHECKED_CAST") it as Provider<S?> }
     }
     override fun filter(spec: Spec<in T>): Provider<T> =
         if (spec.isSatisfiedBy(value)) this else EagerProvider(value)
