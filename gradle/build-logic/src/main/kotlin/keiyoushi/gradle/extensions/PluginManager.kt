@@ -1,9 +1,9 @@
 package keiyoushi.gradle.extensions
 
 import org.gradle.api.plugins.PluginManager
-import org.gradle.api.provider.Provider
 import org.gradle.plugin.use.PluginDependency
 
-fun PluginManager.alias(notation: Provider<PluginDependency>) {
-    apply(notation.get().pluginId)
+/** Apply the plugin whose id is carried by [dep]. */
+fun PluginManager.alias(dep: PluginDependency) {
+    apply(dep.pluginId)
 }

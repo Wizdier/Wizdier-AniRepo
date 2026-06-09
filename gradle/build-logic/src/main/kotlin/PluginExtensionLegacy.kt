@@ -5,8 +5,8 @@ import keiyoushi.gradle.extensions.alias
 import keiyoushi.gradle.extensions.baseVersionCode
 import keiyoushi.gradle.extensions.compileOnly
 import keiyoushi.gradle.extensions.implementation
-import keiyoushi.gradle.extensions.kei
-import keiyoushi.gradle.extensions.libs
+import keiyoushi.gradle.extensions.keiCatalog
+import keiyoushi.gradle.extensions.libsCatalog
 import keiyoushi.gradle.extensions.plugins
 import keiyoushi.gradle.tasks.GenerateKeepRulesTask
 import keiyoushi.gradle.utils.assertWithoutFlag
@@ -20,15 +20,17 @@ import org.gradle.kotlin.dsl.extra
 import org.gradle.kotlin.dsl.register
 import org.gradle.kotlin.dsl.withType
 
-@Suppress("UNUSED")
+@Suppress("UNUSED", "UNCHECKED_CAST")
 class PluginExtensionLegacy : Plugin<Project> {
     override fun apply(target: Project): Unit = with(target) {
-        plugins {
-            alias(libs.plugins.android.application)
-            alias(libs.plugins.kotlin.serialization)
+        val libs = libsCatalog
+        val kei = keiCatalog
 
-            alias(kei.plugins.android.base)
-            alias(kei.plugins.spotless)
+        plugins {
+            alias(libs.findPlugin("android-application").get().get())
+            alias(libs.findPlugin("kotlin-serialization").get().get())
+            alias(kei.findPlugin("android-base").get().get())
+            alias(kei.findPlugin("spotless").get().get())
         }
 
         assertWithoutFlag(!extra.has("pkgNameSuffix")) { "Gradle configuration cannot contain 'pkgNameSuffix'" }
@@ -39,7 +41,8 @@ class PluginExtensionLegacy : Plugin<Project> {
         val theme: Project? = if (extra.has("themePkg")) project(":lib-multisrc:$themePkg") else null
         if (theme != null) evaluationDependsOn(theme.path)
 
-        android {
+        val appExt = extensions.getByName("android") as ApplicationExtension
+        appExt.apply {
             namespace = "eu.kanade.tachiyomi.animeextension"
 
             sourceSets {
@@ -130,7 +133,7 @@ class PluginExtensionLegacy : Plugin<Project> {
             }
         }
 
-        androidComponents {
+        extensions.configure<ApplicationAndroidComponentsExtension> {
             onVariants { variant ->
                 val variantName = variant.name.replaceFirstChar { it.uppercase() }
 
@@ -149,9 +152,9 @@ class PluginExtensionLegacy : Plugin<Project> {
         }
 
         dependencies {
-            if (theme != null) implementation(theme) // Overrides core launcher icons
+            if (theme != null) implementation(theme)
             implementation(project(":core"))
-            compileOnly(libs.bundles.common)
+            compileOnly(libs.findBundle("common").get())
         }
 
         afterEvaluate {
@@ -163,14 +166,6 @@ class PluginExtensionLegacy : Plugin<Project> {
             }
         }
     }
-}
-
-private fun Project.android(block: ApplicationExtension.() -> Unit) {
-    extensions.configure(block)
-}
-
-private fun Project.androidComponents(block: ApplicationAndroidComponentsExtension.() -> Unit) {
-    extensions.configure(block)
 }
 
 private fun Project.base(block: BasePluginExtension.() -> Unit) {
