@@ -2,8 +2,8 @@ import com.android.build.api.dsl.LibraryExtension
 import keiyoushi.gradle.extensions.alias
 import keiyoushi.gradle.extensions.compileOnly
 import keiyoushi.gradle.extensions.implementation
-import keiyoushi.gradle.extensions.keiCatalog
-import keiyoushi.gradle.extensions.libsCatalog
+import keiyoushi.gradle.extensions.kei
+import keiyoushi.gradle.extensions.libs
 import keiyoushi.gradle.extensions.plugins
 import org.gradle.api.Plugin
 import org.gradle.api.Project
@@ -13,17 +13,15 @@ import org.gradle.kotlin.dsl.dependencies
 @Suppress("UNUSED")
 class PluginLibrary : Plugin<Project> {
     override fun apply(target: Project): Unit = with(target) {
-        val libs = libsCatalog
-        val kei = keiCatalog
-
         plugins {
-            alias(libs.findPlugin("android-library").get().get())
-            alias(libs.findPlugin("kotlin-serialization").get().get())
-            alias(kei.findPlugin("android-base").get().get())
-            alias(kei.findPlugin("spotless").get().get())
+            alias(libs.plugins.android.library)
+            alias(libs.plugins.kotlin.serialization)
+
+            alias(kei.plugins.android.base)
+            alias(kei.plugins.spotless)
         }
 
-        extensions.configure<LibraryExtension> {
+        android {
             namespace = "aniyomi.lib.${project.name}"
 
             sourceSets {
@@ -41,8 +39,12 @@ class PluginLibrary : Plugin<Project> {
         }
 
         dependencies {
-            compileOnly(libs.findBundle("common").get())
+            compileOnly(libs.bundles.common)
             implementation(project(":core"))
         }
     }
+}
+
+private fun Project.android(block: LibraryExtension.() -> Unit) {
+    extensions.configure(block)
 }

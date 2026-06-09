@@ -1,14 +1,12 @@
-// build-logic's own build — uses literal plugin versions since the
-// `plugins {}` block cannot resolve VersionCatalog lookups dynamically.
-
 plugins {
-    kotlin("jvm") version "2.3.21"
-    kotlin("plugin.sam.with.receiver") version "2.3.21"
-    id("com.diffplug.spotless") version "8.5.0"
+    alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.samWithReceiver)
+    alias(libs.plugins.spotless)
     `java-gradle-plugin`
 }
 
-val ktlintVersion = "1.8.0"
+// Configuration should be synced with [/gradle/build-logic/src/main/kotlin/PluginSpotless.kt]
+val ktlintVersion = libs.ktlint.bom.get().version
 val editorConfigFile = rootProject.file("../../.editorconfig")
 spotless {
     kotlin {
@@ -27,36 +25,36 @@ spotless {
 
 dependencies {
     compileOnly(gradleKotlinDsl())
-    compileOnly("com.android.tools.build:gradle:9.2.1")
-    compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.21")
-    implementation("com.diffplug.spotless:spotless-plugin-gradle:8.5.0")
-    implementation("com.gradleup.tapmoc:tapmoc-gradle-plugin:0.4.2")
+    compileOnly(libs.android.gradle)
+    compileOnly(libs.kotlin.gradle)
+    implementation(libs.spotless.gradle)
+    implementation(libs.tapmoc.gradle)
 }
 
-kotlin {
-    jvmToolchain(17)
+samWithReceiver {
+    annotation("org.gradle.api.HasImplicitReceiver")
 }
 
 gradlePlugin {
     plugins {
         register("android-base") {
-            id = "kei.plugins.android.base"
+            id = kei.plugins.android.base.get().pluginId
             implementationClass = "PluginAndroidBase"
         }
         register("extension") {
-            id = "kei.plugins.extension.legacy"
+            id = kei.plugins.extension.legacy.get().pluginId
             implementationClass = "PluginExtensionLegacy"
         }
         register("library") {
-            id = "kei.plugins.library"
+            id = kei.plugins.library.get().pluginId
             implementationClass = "PluginLibrary"
         }
         register("multisrc") {
-            id = "kei.plugins.multisrc"
+            id = kei.plugins.multisrc.get().pluginId
             implementationClass = "PluginMultiSrc"
         }
         register("spotless") {
-            id = "kei.plugins.spotless"
+            id = kei.plugins.spotless.get().pluginId
             implementationClass = "PluginSpotless"
         }
     }

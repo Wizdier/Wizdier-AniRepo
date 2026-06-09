@@ -2,7 +2,7 @@ import com.diffplug.gradle.spotless.SpotlessExtension
 import com.diffplug.spotless.FormatterFunc
 import com.diffplug.spotless.FormatterStep
 import keiyoushi.gradle.extensions.alias
-import keiyoushi.gradle.extensions.libsCatalog
+import keiyoushi.gradle.extensions.libs
 import keiyoushi.gradle.extensions.plugins
 import org.gradle.api.Plugin
 import org.gradle.api.Project
@@ -13,14 +13,13 @@ import java.io.Serializable
 @Suppress("UNUSED")
 class PluginSpotless : Plugin<Project> {
     override fun apply(target: Project): Unit = with(target) {
-        val libs = libsCatalog
-
         plugins {
-            alias(libs.findPlugin("spotless").get().get())
+            alias(libs.plugins.spotless)
         }
 
-        val ktlintVersion = libs.findLibrary("ktlint-bom").get().get().version!!
-        extensions.configure<SpotlessExtension> {
+        // Configuration should be synced with [/gradle/build-logic/build.gradle.kts]
+        val ktlintVersion = libs.ktlint.bom.get().version
+        spotless {
             kotlin {
                 target("src/**/*.kt", "*.kts")
                 ktlint(ktlintVersion)
