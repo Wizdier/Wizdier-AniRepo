@@ -49,10 +49,9 @@ private class NullProvider<T> : Provider<T> {
     override fun getOrNull(): T? = null
     override fun getOrElse(default: T): T = default
     override fun isPresent(): Boolean = false
-    override fun orElse(provider: Provider<out T>): Provider<T> = provider
+    override fun orElse(provider: Provider<out T>): Provider<T> = EagerProvider(provider.get())
     override fun orElse(value: @UnsafeVariance T): Provider<T> = EagerProvider(value)
 
-    // map/flatMap/filter/zip — never called, cast away variance through Any
     @Suppress("UNCHECKED_CAST")
     override fun <S : Any> map(transformer: Transformer<out S?, in T>): Provider<S?> =
         unused() as Provider<S?>
