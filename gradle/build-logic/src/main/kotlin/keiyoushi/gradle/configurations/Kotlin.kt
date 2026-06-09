@@ -9,7 +9,7 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinCommonCompilerOptions
 import tapmoc.configureJavaCompatibility
 
 fun Project.configureKotlin() {
-    configureJavaCompatibility(kei.versions.java.get().toInt())
+    configureJavaCompatibility(kei.versions.java.get().requiredVersion.toInt())
 
     kotlin {
         compilerOptions {

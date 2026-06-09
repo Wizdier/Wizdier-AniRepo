@@ -14,13 +14,13 @@ class PluginAndroidBase : Plugin<Project> {
     override fun apply(target: Project): Unit = with(target) {
         configureKotlin()
 
-        android {
-            compileSdk = kei.versions.android.sdk.compile.get().toInt()
+        extensions.configure<CommonExtension<*, *, *, *, *, *>> {
+            compileSdk = kei.versions.android.sdk.compile.get().requiredVersion.toInt()
 
             defaultConfig {
-                minSdk = kei.versions.android.sdk.min.get().toInt()
+                minSdk = kei.versions.android.sdk.min.get().requiredVersion.toInt()
                 if (this is ApplicationDefaultConfig) {
-                    targetSdk = kei.versions.android.sdk.target.get().toInt()
+                    targetSdk = kei.versions.android.sdk.target.get().requiredVersion.toInt()
                 }
 
                 val proguardFile = file("proguard-rules.pro")
@@ -35,12 +35,4 @@ class PluginAndroidBase : Plugin<Project> {
 
         tasks.getByName("preBuild").dependsOn(spotlessTaskName())
     }
-}
-
-private fun Project.android(block: CommonExtension<*, *, *, *, *, *>.() -> Unit) {
-    extensions.configure(block)
-}
-
-private fun CommonExtension<*, *, *, *, *, *>.defaultConfig(block: DefaultConfig.() -> Unit) {
-    defaultConfig.apply(block)
 }
