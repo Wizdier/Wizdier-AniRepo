@@ -27,9 +27,13 @@ class EagerProvider<T>(private val value: T) : Provider<T> {
         EagerProvider(transformer.transform(value))
     override fun <S : Any> flatMap(transformer: Transformer<out Provider<out S>?, in T>): Provider<S?> {
         @Suppress("UNCHECKED_CAST")
-        val result: Any? = transformer.transform(value)
-        return (result as Provider<S>?)
-            ?: EagerProvider<S?>(null).let { @Suppress("UNCHECKED_CAST") it as Provider<S?> }
+        val r = transformer.transform(value)
+        return if (r != null) {
+            @Suppress("UNCHECKED_CAST")
+            r as Provider<S?>
+        } else {
+            NullProvider()
+        }
     }
     override fun filter(spec: Spec<in T>): Provider<T> =
         if (spec.isSatisfiedBy(value)) this else EagerProvider(value)
@@ -38,6 +42,37 @@ class EagerProvider<T>(private val value: T) : Provider<T> {
         right: Provider<U>,
         combiner: BiFunction<in T, in U, out R?>,
     ): Provider<R> = EagerProvider(combiner.apply(value, right.get()))
+}
+
+private class NullProvider<T> : Provider<T> {
+    override fun get(): T? = null
+    override fun getOrNull(): T? = null
+    override fun getOrElse(default: T): T = default
+    override fun isPresent(): Boolean = false
+    override fun orElse(provider: Provider<out T>): Provider<T> = provider
+    override fun orElse(value: @UnsafeVariance T): Provider<T> = EagerProvider(value)
+
+    // map/flatMap/filter/zip — never called, cast away variance through Any
+    @Suppress("UNCHECKED_CAST")
+    override fun <S : Any> map(transformer: Transformer<out S?, in T>): Provider<S?> =
+        unused() as Provider<S?>
+
+    @Suppress("UNCHECKED_CAST")
+    override fun <S : Any> flatMap(transformer: Transformer<out Provider<out S>?, in T>): Provider<S?> =
+        unused() as Provider<S?>
+
+    @Suppress("UNCHECKED_CAST")
+    override fun filter(spec: Spec<in T>): Provider<T> = unused() as Provider<T>
+
+    override fun forUseAtConfigurationTime(): Provider<T> = this
+
+    @Suppress("UNCHECKED_CAST")
+    override fun <U : Any, R : Any> zip(
+        right: Provider<U>,
+        combiner: BiFunction<in T, in U, out R?>,
+    ): Provider<R> = unused() as Provider<R>
+
+    private fun unused(): Nothing = throw UnsupportedOperationException("NullProvider transform")
 }
 
 class CatalogVersion(private val raw: String) {
