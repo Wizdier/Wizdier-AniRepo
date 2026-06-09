@@ -10,24 +10,25 @@ import org.gradle.plugin.use.PluginDependency
 import java.util.function.BiFunction
 
 // ---------------------------------------------------------------------------
-// Provider wrapper — eagerly resolves, full Provider<out T> contract
+// Provider wrapper — eagerly resolves, full Provider<T> contract
 // ---------------------------------------------------------------------------
-class EagerProvider<out T>(private val value: T) : Provider<T> {
+class EagerProvider<T>(private val value: T) : Provider<T> {
     override fun get(): T = value
     override fun getOrNull(): T = value
-    override fun getOrElse(default: @UnsafeVariance T): T = value
+    override fun getOrElse(default: T & Any): T = value
     override fun isPresent(): Boolean = true
+    override fun orElse(value: T & Any): Provider<T & Any> = EagerProvider(value)
     override fun orElse(provider: Provider<out T>): Provider<T> = this
-    override fun <S : Any> map(transformer: Transformer<out S?, in @UnsafeVariance T>): Provider<S?> =
+    override fun <S : Any> map(transformer: Transformer<out S?, in T>): Provider<S?> =
         EagerProvider(transformer.transform(value))
-    override fun <S : Any> flatMap(transformer: Transformer<out Provider<out S>?, in @UnsafeVariance T>): Provider<S?> {
+    override fun <S : Any> flatMap(transformer: Transformer<out Provider<out S>?, in T>): Provider<S> {
         @Suppress("UNCHECKED_CAST")
-        return (transformer.transform(value) as Provider<S>?) ?: EagerProvider<S?>(null)
+        return (transformer.transform(value) as Provider<S>?) ?: EagerProvider<S?>(null) as Provider<S>
     }
-    override fun filter(spec: Spec<in @UnsafeVariance T>): Provider<T> =
+    override fun filter(spec: Spec<in T>): Provider<T> =
         if (spec.isSatisfiedBy(value)) this else EagerProvider(value)
     override fun forUseAtConfigurationTime(): Provider<T> = this
-    override fun <U : Any, R : Any> zip(right: Provider<U>, combiner: BiFunction<in @UnsafeVariance T, in U, out R?>): Provider<R> =
+    override fun <U : Any, R : Any> zip(right: Provider<U>, combiner: BiFunction<in T, in U, out R?>): Provider<R> =
         EagerProvider(combiner.apply(value, right.get()))
 }
 
@@ -134,7 +135,7 @@ class LibrariesForLibs(private val c: VersionCatalog) {
     }
 
     class LibsBundles(private val c: VersionCatalog) {
-        val common: Provider<ExternalModuleDependencyBundle> get() = EagerProvider(c.findBundle("common").get())
+        val common: Provider<ExternalModuleDependencyBundle> get() = c.findBundle("common").get()
     }
 
     class LibsVersions(private val c: VersionCatalog) {
