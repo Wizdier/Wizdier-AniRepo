@@ -14,7 +14,7 @@ https://raw.githubusercontent.com/Wizdier/Wizdier-AniRepo/repo/index.min.json
 
 | Extension | Language | Version | NSFW |
 | --- | --- | --- | --- |
-| Miruro.tv | en | 1 | Yes |
+| Miruro.tv | en | 14.2 | Yes |
 
 ## 🛠️ How it works
 
