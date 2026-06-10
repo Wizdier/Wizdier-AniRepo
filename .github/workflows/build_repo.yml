@@ -77,6 +77,23 @@ jobs:
       - name: Create repo index
         run: python ./.github/scripts/create-repo.py
 
+      - name: Create repo.json
+        run: |
+          APK="$(find repo/apk -name '*.apk' | head -1)"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
+          FINGERPRINT="$("$APKSIGNER" verify --print-certs "$APK" | grep -m1 'SHA-256 digest' | awk '{print $NF}')"
+          echo "Signing key fingerprint: $FINGERPRINT"
+          cat > repo/repo.json <<EOF
+          {
+            "meta": {
+              "name": "Wizdier-AniRepo",
+              "website": "https://github.com/${{ github.repository }}",
+              "signingKeyFingerprint": "$FINGERPRINT"
+            }
+          }
+          EOF
+          cat repo/repo.json
+
       - name: Clean up signing key
         if: always()
         run: rm -f signingkey.jks
