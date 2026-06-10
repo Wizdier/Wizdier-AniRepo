@@ -17,12 +17,14 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.interceptor.rateLimitHost
 import keiyoushi.utils.LazyMutable
 import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.decodeHex
 import keiyoushi.utils.delegate
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.getSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.parallelMap
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -61,6 +63,7 @@ class Miruro :
     private val SharedPreferences.stripHtml by preferences.delegate(PREF_STRIP_HTML_KEY, PREF_STRIP_HTML_DEFAULT)
     private val SharedPreferences.mergeAcrossProviders by preferences.delegate(PREF_MERGE_PROVIDERS_KEY, PREF_MERGE_PROVIDERS_DEFAULT)
     private val SharedPreferences.useAnilistEpisodeTitles by preferences.delegate(PREF_ANILIST_EP_TITLES_KEY, PREF_ANILIST_EP_TITLES_DEFAULT)
+    private val SharedPreferences.preferredCountries by preferences.delegate(PREF_COUNTRY_KEY, PREF_COUNTRY_DEFAULT)
     private val SharedPreferences.preferredTitleStyle by preferences.delegate(PREF_TITLE_STYLE_KEY, PREF_TITLE_STYLE_DEFAULT)
     private val SharedPreferences.preferredProvider by preferences.delegate(PREF_PROVIDER_KEY, PREF_PROVIDER_DEFAULT)
     private val SharedPreferences.preferredSubType by preferences.delegate(PREF_SUB_TYPE_KEY, PREF_SUB_TYPE_DEFAULT)
@@ -119,6 +122,13 @@ class Miruro :
         private const val PREF_ANILIST_EP_TITLES_TITLE = "AniList episode titles"
         private const val PREF_ANILIST_EP_TITLES_DEFAULT = true
 
+        // Country of origin (ISO 3166-1 alpha-2, as used by Miruro/AniList)
+        private const val PREF_COUNTRY_KEY = "preferred_countries"
+        private const val PREF_COUNTRY_TITLE = "Country of origin"
+        private val PREF_COUNTRY_ENTRIES = listOf("Japan (Anime)", "China (Donghua)", "South Korea (Aeni)", "Taiwan")
+        private val PREF_COUNTRY_VALUES = listOf("JP", "CN", "KR", "TW")
+        private val PREF_COUNTRY_DEFAULT = emptySet<String>()
+
         private const val ANILIST_GRAPHQL_URL = "https://graphql.anilist.co"
         private const val JIKAN_API_URL = "https://api.jikan.moe/v4"
         private const val ANIZIP_API_URL = "https://api.ani.zip/mappings"
@@ -138,33 +148,141 @@ class Miruro :
         .rateLimitHost("$JIKAN_API_URL/".toHttpUrl(), permits = 1, period = 1, unit = TimeUnit.SECONDS)
         .build()
 
+    /**
+     * Client with generous timeouts for metadata APIs (ani.zip / AniList).
+     * Large titles (One Piece, Bleach, ...) return ~1MB+ payloads which can
+     * exceed the default read timeout on slow connections.
+     */
+    private val metaClient: OkHttpClient = network.client.newBuilder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(3, TimeUnit.MINUTES)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(4, TimeUnit.MINUTES)
+        .retryOnConnectionFailure(true)
+        .build()
+
+    /**
+     * Fetches a JSON document with the long-timeout [metaClient], retrying
+     * once on transient failures. Returns null instead of throwing.
+     */
+    private fun fetchJsonWithRetry(request: Request, tag: String, attempts: Int = 2): JSONObject? {
+        repeat(attempts) { attempt ->
+            try {
+                metaClient.newCall(request).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        return JSONObject(resp.body.string())
+                    }
+                    Log.e("Miruro", "$tag request failed: HTTP ${resp.code} (attempt ${attempt + 1}/$attempts)")
+                    // Don't retry on client errors - they won't succeed
+                    if (resp.code in 400..499) return null
+                }
+            } catch (e: Exception) {
+                Log.e("Miruro", "$tag request error (attempt ${attempt + 1}/$attempts): ${e.message}")
+            }
+            if (attempt < attempts - 1) Thread.sleep(1000)
+        }
+        return null
+    }
+
+    // ============================== Country ===============================
+
+    /** Country codes currently selected in settings, in stable order. */
+    private val settingsCountries: List<String>
+        get() {
+            val selected = preferences.preferredCountries
+            return PREF_COUNTRY_VALUES.filter { it in selected }
+        }
+
+    /**
+     * Resolves the effective country list. A non-default value chosen in the
+     * search filter overrides the settings selection.
+     */
+    private fun resolveCountries(filterCountry: String? = null): List<String> = when {
+        filterCountry != null && filterCountry != "all" -> listOf(filterCountry)
+        else -> settingsCountries
+    }
+
+    /**
+     * Miruro's API only honors a single countryOfOrigin per request, so for
+     * multi-country selections we fetch each country in parallel and merge
+     * the pages (interleaved, de-duplicated, failures ignored per-country).
+     */
+    private suspend fun fetchMergedPages(requests: List<Request>, parser: (Response) -> AnimesPage): AnimesPage {
+        if (requests.size == 1) {
+            return client.newCall(requests[0]).awaitSuccess().use(parser)
+        }
+
+        val pages = requests.parallelMap { request ->
+            runCatching {
+                client.newCall(request).awaitSuccess().use(parser)
+            }.getOrElse {
+                Log.e("Miruro", "Country page fetch failed: ${it.message}")
+                AnimesPage(emptyList(), false)
+            }
+        }
+
+        val seen = HashSet<String>()
+        val merged = mutableListOf<SAnime>()
+        val iterators = pages.map { it.animes.iterator() }
+        var added = true
+        while (added) {
+            added = false
+            for (iterator in iterators) {
+                if (iterator.hasNext()) {
+                    val anime = iterator.next()
+                    if (seen.add(anime.url)) merged.add(anime)
+                    added = true
+                }
+            }
+        }
+        return AnimesPage(merged, pages.any { it.hasNextPage })
+    }
+
     // ============================== Trending ===============================
 
-    override fun popularAnimeRequest(page: Int): Request {
+    private fun browseRequest(page: Int, sort: String, country: String? = null): Request {
         val query = buildPipeQuery(
             "type" to "ANIME",
             "status" to "RELEASING",
             "page" to page,
             "perPage" to 20,
-            "sort" to "TRENDING_DESC",
+            "sort" to sort,
+            "countryOfOrigin" to country,
         )
         return buildPipeRequest("search/browse", "GET", query = query)
     }
+
+    override suspend fun getPopularAnime(page: Int): AnimesPage {
+        val countries = settingsCountries
+        if (countries.size <= 1) {
+            return client.newCall(browseRequest(page, "TRENDING_DESC", countries.firstOrNull()))
+                .awaitSuccess().use(::popularAnimeParse)
+        }
+        return fetchMergedPages(
+            countries.map { browseRequest(page, "TRENDING_DESC", it) },
+            ::popularAnimeParse,
+        )
+    }
+
+    override fun popularAnimeRequest(page: Int): Request = browseRequest(page, "TRENDING_DESC", settingsCountries.firstOrNull())
 
     override fun popularAnimeParse(response: Response): AnimesPage = parseAnimeListResponse(response)
 
     // ============================== Latest ===============================
 
-    override fun latestUpdatesRequest(page: Int): Request {
-        val query = buildPipeQuery(
-            "type" to "ANIME",
-            "status" to "RELEASING",
-            "page" to page,
-            "perPage" to 20,
-            "sort" to "UPDATED_AT_DESC",
+    override suspend fun getLatestUpdates(page: Int): AnimesPage {
+        val countries = settingsCountries
+        if (countries.size <= 1) {
+            return client.newCall(browseRequest(page, "UPDATED_AT_DESC", countries.firstOrNull()))
+                .awaitSuccess().use(::latestUpdatesParse)
+        }
+        return fetchMergedPages(
+            countries.map { browseRequest(page, "UPDATED_AT_DESC", it) },
+            ::latestUpdatesParse,
         )
-        return buildPipeRequest("search/browse", "GET", query = query)
     }
+
+    override fun latestUpdatesRequest(page: Int): Request = browseRequest(page, "UPDATED_AT_DESC", settingsCountries.firstOrNull())
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseAnimeListResponse(response)
 
@@ -201,12 +319,27 @@ class Miruro :
             return AnimesPage(listOf(anime), false)
         }
 
-        val request = searchAnimeRequest(page, query, filters)
+        val params = MiruroFilters.getSearchParameters(filters)
+        val countries = resolveCountries(params.country)
+
+        if (countries.size > 1) {
+            return fetchMergedPages(
+                countries.map { searchAnimeRequestWithCountry(page, query, filters, it) },
+                ::searchAnimeParse,
+            )
+        }
+
+        val request = searchAnimeRequestWithCountry(page, query, filters, countries.firstOrNull())
         return client.newCall(request).awaitSuccess()
             .use(::searchAnimeParse)
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        val params = MiruroFilters.getSearchParameters(filters)
+        return searchAnimeRequestWithCountry(page, query, filters, resolveCountries(params.country).firstOrNull())
+    }
+
+    private fun searchAnimeRequestWithCountry(page: Int, query: String, filters: AnimeFilterList, country: String?): Request {
         if (query.isNotEmpty()) {
             val perPage = 20
             val queryParams = buildPipeQuery(
@@ -214,6 +347,7 @@ class Miruro :
                 "type" to "ANIME",
                 "limit" to perPage,
                 "offset" to (page - 1) * perPage,
+                "countryOfOrigin" to country,
             )
             return buildPipeRequest("search", "GET", query = queryParams)
         }
@@ -224,6 +358,7 @@ class Miruro :
             "type" to "ANIME",
             "page" to page,
             "perPage" to 20,
+            "countryOfOrigin" to country,
         )
 
         // Apply filters — only add non-default values
@@ -711,6 +846,16 @@ class Miruro :
             default = PREF_ANILIST_EP_TITLES_DEFAULT,
             summary = "Use official episode titles from AniList when available.",
         )
+
+        screen.addSetPreference(
+            key = PREF_COUNTRY_KEY,
+            title = PREF_COUNTRY_TITLE,
+            default = PREF_COUNTRY_DEFAULT,
+            entries = PREF_COUNTRY_ENTRIES,
+            entryValues = PREF_COUNTRY_VALUES,
+            summary = "Only show content from the selected countries on the homepage and in searches. " +
+                "Select none to show everything. The search filter overrides this.",
+        )
     }
 
     // ============================== Helpers ==============================
@@ -782,7 +927,7 @@ class Miruro :
     }
 
     private fun fetchMalId(anilistId: Int): Int? = try {
-        client.newCall(anilistMalIdRequest(anilistId)).execute()
+        metaClient.newCall(anilistMalIdRequest(anilistId)).execute()
             .parseAs<AnilistMalIdResponse>().data.media.idMal
     } catch (e: Exception) {
         Log.e("Miruro", "Failed to resolve MAL ID: ${e.message}")
@@ -834,14 +979,7 @@ class Miruro :
 
         // 1) ani.zip: rich per-episode metadata (title, thumbnail, overview)
         try {
-            val json = client.newCall(GET("$ANIZIP_API_URL?anilist_id=$anilistId")).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    Log.e("Miruro", "ani.zip request failed: HTTP ${resp.code}")
-                    null
-                } else {
-                    JSONObject(resp.body.string())
-                }
-            }
+            val json = fetchJsonWithRetry(GET("$ANIZIP_API_URL?anilist_id=$anilistId"), "ani.zip")
             val episodesObj = json?.optJSONObject("episodes")
             if (episodesObj != null) {
                 for (key in episodesObj.keys()) {
@@ -868,14 +1006,7 @@ class Miruro :
 
         // 2) AniList: MAL id, cover and streamingEpisodes titles (fills gaps)
         try {
-            val json = client.newCall(anilistMetaRequest(anilistId)).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    Log.e("Miruro", "AniList meta request failed: HTTP ${resp.code}")
-                    null
-                } else {
-                    JSONObject(resp.body.string())
-                }
-            }
+            val json = fetchJsonWithRetry(anilistMetaRequest(anilistId), "AniList")
             val media = json?.optJSONObject("data")?.optJSONObject("Media")
             if (media != null) {
                 media.optInt("idMal", 0).takeIf { it > 0 }?.let { meta.malId = it }

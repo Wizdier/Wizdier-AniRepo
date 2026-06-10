@@ -36,6 +36,8 @@ object MiruroFilters {
 
     class SortFilter : QueryPartFilter("Sort", MiruroFiltersData.SORT)
 
+    class CountryFilter : QueryPartFilter("Country of Origin", MiruroFiltersData.COUNTRIES)
+
     class GenreFilter :
         CheckBoxFilterList(
             "Genres",
@@ -62,6 +64,7 @@ object MiruroFilters {
 
     val FILTER_LIST get() = AnimeFilterList(
         SortFilter(),
+        CountryFilter(),
         AnimeFilter.Separator(),
         GenreFilter(),
         TagsFilter(),
@@ -74,6 +77,7 @@ object MiruroFilters {
 
     data class FilterSearchParams(
         val sort: String = "all",
+        val country: String = "all",
         val genres: List<String> = emptyList(),
         val tags: List<String> = emptyList(),
         val year: String = "all",
@@ -86,6 +90,7 @@ object MiruroFilters {
         if (filters.isEmpty()) return FilterSearchParams()
         return FilterSearchParams(
             sort = filters.asQueryPart<SortFilter>(),
+            country = filters.asQueryPart<CountryFilter>(),
             genres = filters.parseCheckbox<GenreFilter>(MiruroFiltersData.GENRES),
             tags = filters.parseCheckbox<TagsFilter>(MiruroFiltersData.TAGS),
             year = filters.asQueryPart<YearFilter>(),
@@ -98,6 +103,15 @@ object MiruroFilters {
     private object MiruroFiltersData {
 
         val ALL = Pair("All", "all")
+
+        // ISO 3166-1 alpha-2 codes supported by Miruro's AniList-backed API
+        val COUNTRIES = arrayOf(
+            Pair("Use default (settings)", "all"),
+            Pair("Japan (JP)", "JP"),
+            Pair("China (CN)", "CN"),
+            Pair("South Korea (KR)", "KR"),
+            Pair("Taiwan (TW)", "TW"),
+        )
 
         val SORT = arrayOf(
             ALL,
