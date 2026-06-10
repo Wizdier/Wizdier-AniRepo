@@ -55,7 +55,9 @@ jobs:
           ALIAS: ${{ secrets.ALIAS }}
           KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew assembleRelease
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease
 
       - name: Collect APKs
         run: |
