@@ -60,6 +60,7 @@ class Miruro :
     private val SharedPreferences.includeAllSubTypes by preferences.delegate(PREF_INCLUDE_ALL_SUB_TYPES_KEY, PREF_INCLUDE_ALL_SUB_TYPES_DEFAULT)
     private val SharedPreferences.stripHtml by preferences.delegate(PREF_STRIP_HTML_KEY, PREF_STRIP_HTML_DEFAULT)
     private val SharedPreferences.mergeAcrossProviders by preferences.delegate(PREF_MERGE_PROVIDERS_KEY, PREF_MERGE_PROVIDERS_DEFAULT)
+    private val SharedPreferences.useAnilistEpisodeTitles by preferences.delegate(PREF_ANILIST_EP_TITLES_KEY, PREF_ANILIST_EP_TITLES_DEFAULT)
     private val SharedPreferences.preferredTitleStyle by preferences.delegate(PREF_TITLE_STYLE_KEY, PREF_TITLE_STYLE_DEFAULT)
     private val SharedPreferences.preferredProvider by preferences.delegate(PREF_PROVIDER_KEY, PREF_PROVIDER_DEFAULT)
     private val SharedPreferences.preferredSubType by preferences.delegate(PREF_SUB_TYPE_KEY, PREF_SUB_TYPE_DEFAULT)
@@ -114,8 +115,15 @@ class Miruro :
         private const val PREF_MERGE_PROVIDERS_TITLE = "Merge episodes across providers"
         private const val PREF_MERGE_PROVIDERS_DEFAULT = true
 
+        private const val PREF_ANILIST_EP_TITLES_KEY = "anilist_episode_titles"
+        private const val PREF_ANILIST_EP_TITLES_TITLE = "AniList episode titles"
+        private const val PREF_ANILIST_EP_TITLES_DEFAULT = true
+
         private const val ANILIST_GRAPHQL_URL = "https://graphql.anilist.co"
         private const val JIKAN_API_URL = "https://api.jikan.moe/v4"
+
+        // Matches AniList streamingEpisodes titles, e.g. "Episode 5 - The Title"
+        private val EPISODE_TITLE_REGEX = Regex("""^Episode\s+(\d+(?:\.\d+)?)\s*[-–—:]\s*(.+)$""", RegexOption.IGNORE_CASE)
 
         // Mirror domains are fetched from https://miruro.com/
         private const val PREF_MIRROR_KEY = "preferred_mirror"
@@ -269,6 +277,8 @@ class Miruro :
         val thumbnail = extractCoverImage(media.opt("coverImage"))
         val bannerImage = extractBannerImage(media.opt("bannerImage"))
         val coverUrl = thumbnail.ifEmpty { bannerImage }
+            // Fall back to the AniList cover when Miruro has no image for this title.
+            .ifEmpty { anilistId.takeIf { it > 0 }?.let { resolveAnilistMeta(it).coverImage }.orEmpty() }
 
         val description = if (preferences.stripHtml) {
             media.optString("description", "")
@@ -367,6 +377,7 @@ class Miruro :
         }
 
         val result = episodes.reversed()
+            .let { if (preferences.useAnilistEpisodeTitles) applyAnilistEpisodeTitles(it, anilistId) else it }
         return if (preferences.hideFillers) {
             result.filter { !it.scanlator.orEmpty().contains("Filler") }
         } else {
@@ -468,6 +479,9 @@ class Miruro :
         val anilistId: Int,
         var malId: Int? = null,
         var fillerEpisodes: Set<Float>? = null,
+        var episodeTitles: Map<Float, String>? = null,
+        var coverImage: String? = null,
+        var anilistFetched: Boolean = false,
     )
 
     @Volatile
@@ -683,6 +697,13 @@ class Miruro :
             default = PREF_MERGE_PROVIDERS_DEFAULT,
             summary = "Adds episodes from other providers that are missing from the preferred provider.",
         )
+
+        screen.addSwitchPreference(
+            key = PREF_ANILIST_EP_TITLES_KEY,
+            title = PREF_ANILIST_EP_TITLES_TITLE,
+            default = PREF_ANILIST_EP_TITLES_DEFAULT,
+            summary = "Use official episode titles from AniList when available.",
+        )
     }
 
     // ============================== Helpers ==============================
@@ -699,6 +720,7 @@ class Miruro :
 
         val existing = meta?.takeIf { it.anilistId == anilistId }
         val malId = existing?.malId
+            ?: resolveAnilistMeta(anilistId).malId
             ?: fetchMalId(anilistId)
 
         if (existing != null) {
@@ -758,6 +780,118 @@ class Miruro :
     } catch (e: Exception) {
         Log.e("Miruro", "Failed to resolve MAL ID: ${e.message}")
         null
+    }
+
+    // ============================== AniList metadata ==============================
+
+    private fun anilistMetaRequest(anilistId: Int): Request {
+        val query = $$"""
+        query media($id: Int, $type: MediaType) {
+            Media(id: $id, type: $type) {
+                idMal
+                coverImage {
+                    extraLarge
+                    large
+                    medium
+                }
+                streamingEpisodes {
+                    title
+                    thumbnail
+                }
+            }
+        }
+        """.trimIndent()
+        val variables = buildJsonObject {
+            put("id", anilistId)
+            put("type", "ANIME")
+        }
+        val body = FormBody.Builder()
+            .add("query", query)
+            .add("variables", kotlinx.serialization.json.Json.encodeToString(variables))
+            .build()
+        return POST(ANILIST_GRAPHQL_URL, body = body)
+    }
+
+    /**
+     * Fetches (and caches) AniList metadata for an anime: MAL id, cover image
+     * and official episode titles from streamingEpisodes.
+     * Never throws - on any failure it returns whatever is cached so the
+     * episode list still loads without AniList data.
+     */
+    private fun resolveAnilistMeta(anilistId: Int): AnimeMeta {
+        val cached = cachedAnimeMeta?.takeIf { it.anilistId == anilistId }
+        if (cached != null && cached.anilistFetched) return cached
+
+        val meta = cached ?: AnimeMeta(anilistId).also { cachedAnimeMeta = it }
+
+        try {
+            val json = client.newCall(anilistMetaRequest(anilistId)).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    Log.e("Miruro", "AniList meta request failed: HTTP ${resp.code}")
+                    return meta
+                }
+                JSONObject(resp.body.string())
+            }
+            val media = json.optJSONObject("data")?.optJSONObject("Media") ?: return meta
+
+            media.optInt("idMal", 0).takeIf { it > 0 }?.let { meta.malId = it }
+
+            extractCoverImage(media.opt("coverImage"))
+                .takeIf(String::isNotEmpty)
+                ?.let { meta.coverImage = it }
+
+            val streamingEpisodes = media.optJSONArray("streamingEpisodes")
+            if (streamingEpisodes != null) {
+                val titles = mutableMapOf<Float, String>()
+                for (i in 0 until streamingEpisodes.length()) {
+                    val rawTitle = streamingEpisodes.optJSONObject(i)
+                        ?.optString("title")
+                        .orEmpty()
+                    val match = EPISODE_TITLE_REGEX.find(rawTitle) ?: continue
+                    val number = match.groupValues[1].toFloatOrNull() ?: continue
+                    val title = match.groupValues[2].trim()
+                    if (title.isNotEmpty() && number !in titles) {
+                        titles[number] = title
+                    }
+                }
+                meta.episodeTitles = titles
+            }
+
+            meta.anilistFetched = true
+        } catch (e: Exception) {
+            Log.e("Miruro", "Failed to fetch AniList metadata: ${e.message}")
+        }
+
+        return meta
+    }
+
+    private fun formatEpisodeNumber(number: Float): String = if (number % 1f == 0f) number.toInt().toString() else number.toString()
+
+    /**
+     * Replaces generic/missing episode names with official AniList episode
+     * titles, keeping the provider's own title as fallback.
+     */
+    private fun applyAnilistEpisodeTitles(episodes: List<SEpisode>, anilistId: Int?): List<SEpisode> {
+        if (anilistId == null || episodes.isEmpty()) return episodes
+
+        val titles = resolveAnilistMeta(anilistId).episodeTitles.orEmpty()
+        if (titles.isEmpty()) return episodes
+
+        episodes.forEach { episode ->
+            val anilistTitle = titles[episode.episode_number] ?: return@forEach
+            val epLabel = "Episode ${formatEpisodeNumber(episode.episode_number)}"
+            val currentTitle = episode.name
+                .removePrefix(epLabel)
+                .removePrefix(":")
+                .trim()
+            // Prefer the official AniList title; keep provider title only when
+            // AniList has nothing for this episode (handled by the lookup above).
+            if (currentTitle.isEmpty() || !currentTitle.equals(anilistTitle, ignoreCase = true)) {
+                episode.name = "$epLabel: $anilistTitle"
+            }
+        }
+
+        return episodes
     }
 
     private fun fetchFillerEpisodes(malId: Int, maxEpisode: Float = Float.MAX_VALUE): Set<Float> {
