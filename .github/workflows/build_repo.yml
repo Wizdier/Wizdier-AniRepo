@@ -1,0 +1,93 @@
+name: Build & Publish Repo
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - '**'
+      - '!**.md'
+      - '!.github/**'
+      - '.github/scripts/**'
+      - '.github/workflows/build_repo.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build extensions & publish repo
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare signing key (optional)
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: |
+          if [ -n "$SIGNING_KEY" ]; then
+            echo "$SIGNING_KEY" | base64 -d > signingkey.jks
+            chmod 600 signingkey.jks
+            echo "Using release signing key."
+          else
+            echo "No SIGNING_KEY secret found - APKs will be signed with the debug key."
+          fi
+
+      - name: Build all extensions
+        env:
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease
+
+      - name: Collect APKs
+        run: |
+          rm -rf repo
+          mkdir -p repo/apk
+          for apk in $(find src -name "*-release.apk"); do
+            cp "$apk" "repo/apk/$(basename "$apk" | sed 's/-release\.apk$/.apk/')"
+          done
+          ls -la repo/apk
+
+      - name: Run extension inspector
+        run: |
+          INSPECTOR_LINK="$(curl -s "https://api.github.com/repos/komikku-app/aniyomi-extensions-inspector/releases/latest" | jq -r '.assets[0].browser_download_url')"
+          curl -L "$INSPECTOR_LINK" -o ./Inspector.jar
+          java -jar ./Inspector.jar "repo/apk" "output.json" "tmp"
+
+      - name: Create repo index
+        run: python ./.github/scripts/create-repo.py
+
+      - name: Clean up signing key
+        if: always()
+        run: rm -f signingkey.jks
+
+      - name: Deploy to repo branch
+        run: |
+          cd repo
+          git init -b repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git add .
+          git commit -m "Update extensions repo
+
+          Built on commit: ${{ github.sha }}"
+          git push -f origin repo
