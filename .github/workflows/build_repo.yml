@@ -97,7 +97,7 @@ jobs:
           cat > repo/repo.json <<EOF
           {
             "meta": {
-              "name": "Wizdier-AniRepo",
+              "name": "Wizdier",
               "website": "https://github.com/${{ github.repository }}",
               "signingKeyFingerprint": "$FINGERPRINT"
             }
