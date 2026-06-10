@@ -69,9 +69,20 @@ jobs:
           ls -la repo/apk
 
       - name: Run extension inspector
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Pinned fallback in case the API call fails
+          FALLBACK_INSPECTOR_LINK: "https://github.com/komikku-app/aniyomi-extensions-inspector/releases/download/v1.5.0.1/Aniyomi.Extensions.Inspector-v1.4.10-r798.jar"
         run: |
-          INSPECTOR_LINK="$(curl -s "https://api.github.com/repos/komikku-app/aniyomi-extensions-inspector/releases/latest" | jq -r '.assets[0].browser_download_url')"
-          curl -L "$INSPECTOR_LINK" -o ./Inspector.jar
+          INSPECTOR_LINK="$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/komikku-app/aniyomi-extensions-inspector/releases/latest" \
+            | jq -r '.assets[0].browser_download_url // empty' || true)"
+          if [ -z "$INSPECTOR_LINK" ] || [ "$INSPECTOR_LINK" = "null" ]; then
+            echo "::warning::Could not resolve latest inspector release, using pinned fallback."
+            INSPECTOR_LINK="$FALLBACK_INSPECTOR_LINK"
+          fi
+          echo "Downloading inspector: $INSPECTOR_LINK"
+          curl -sfL --retry 3 --retry-delay 5 "$INSPECTOR_LINK" -o ./Inspector.jar
           java -jar ./Inspector.jar "repo/apk" "output.json" "tmp"
 
       - name: Create repo index
