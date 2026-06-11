@@ -171,8 +171,7 @@ class Miruro :
     private val settingsCountries: List<String>
         get() = PREF_COUNTRY_VALUES.filter { it in preferences.preferredCountries }
 
-    private fun resolveCountries(filterCountry: String? = null): List<String> =
-        if (filterCountry != null && filterCountry != "all") listOf(filterCountry) else settingsCountries
+    private fun resolveCountries(filterCountry: String? = null): List<String> = if (filterCountry != null && filterCountry != "all") listOf(filterCountry) else settingsCountries
 
     private suspend fun fetchMergedPages(requests: List<Request>, parser: (Response) -> AnimesPage): AnimesPage {
         if (requests.size == 1) {
@@ -226,11 +225,9 @@ class Miruro :
         }
     }
 
-    override fun popularAnimeRequest(page: Int): Request =
-        browseRequest(page, "TRENDING_DESC", settingsCountries.firstOrNull())
+    override fun popularAnimeRequest(page: Int): Request = browseRequest(page, "TRENDING_DESC", settingsCountries.firstOrNull())
 
-    override fun popularAnimeParse(response: Response): AnimesPage =
-        parseAnimeListResponse(response)
+    override fun popularAnimeParse(response: Response): AnimesPage = parseAnimeListResponse(response)
 
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
         val countries = settingsCountries
@@ -241,11 +238,9 @@ class Miruro :
         }
     }
 
-    override fun latestUpdatesRequest(page: Int): Request =
-        browseRequest(page, "UPDATED_AT_DESC", settingsCountries.firstOrNull())
+    override fun latestUpdatesRequest(page: Int): Request = browseRequest(page, "UPDATED_AT_DESC", settingsCountries.firstOrNull())
 
-    override fun latestUpdatesParse(response: Response): AnimesPage =
-        parseAnimeListResponse(response)
+    override fun latestUpdatesParse(response: Response): AnimesPage = parseAnimeListResponse(response)
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         if (query.startsWith("https://")) {
@@ -280,13 +275,12 @@ class Miruro :
         }
     }
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request =
-        searchAnimeRequestWithCountry(
-            page,
-            query,
-            filters,
-            resolveCountries(MiruroFilters.getSearchParameters(filters).country).firstOrNull()
-        )
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = searchAnimeRequestWithCountry(
+        page,
+        query,
+        filters,
+        resolveCountries(MiruroFilters.getSearchParameters(filters).country).firstOrNull(),
+    )
 
     private fun searchAnimeRequestWithCountry(
         page: Int,
@@ -340,11 +334,9 @@ class Miruro :
         return buildPipeRequest("search/browse", "GET", query = queryParams)
     }
 
-    override fun searchAnimeParse(response: Response): AnimesPage =
-        parseAnimeListResponse(response, listOf("results", "data"))
+    override fun searchAnimeParse(response: Response): AnimesPage = parseAnimeListResponse(response, listOf("results", "data"))
 
-    override fun animeDetailsRequest(anime: SAnime): Request =
-        buildPipeRequest("info/${anime.url}", "GET")
+    override fun animeDetailsRequest(anime: SAnime): Request = buildPipeRequest("info/${anime.url}", "GET")
 
     override fun animeDetailsParse(response: Response): SAnime {
         val jsonObj = JSONObject(response.use(::decryptResponse))
@@ -756,7 +748,10 @@ class Miruro :
 
     private fun anilistMalIdRequest(anilistId: Int): Request {
         val query = $$"query media($id: Int, $type: MediaType) { Media(id: $id, type: $type) { idMal } }"
-        val variables = buildJsonObject { put("id", anilistId); put("type", "ANIME") }
+        val variables = buildJsonObject {
+            put("id", anilistId)
+            put("type", "ANIME")
+        }
         val body = FormBody.Builder()
             .add("query", query)
             .add("variables", kotlinx.serialization.json.Json.encodeToString(variables))
@@ -774,7 +769,10 @@ class Miruro :
 
     private fun anilistMetaRequest(anilistId: Int): Request {
         val query = $$"query media($id: Int, $type: MediaType) { Media(id: $id, type: $type) { idMal coverImage { extraLarge large medium } streamingEpisodes { title thumbnail } } }"
-        val variables = buildJsonObject { put("id", anilistId); put("type", "ANIME") }
+        val variables = buildJsonObject {
+            put("id", anilistId)
+            put("type", "ANIME")
+        }
         val body = FormBody.Builder()
             .add("query", query)
             .add("variables", kotlinx.serialization.json.Json.encodeToString(variables))
@@ -838,8 +836,7 @@ class Miruro :
         return meta
     }
 
-    private fun formatEpisodeNumber(n: Float): String =
-        if (n % 1f == 0f) n.toInt().toString() else n.toString()
+    private fun formatEpisodeNumber(n: Float): String = if (n % 1f == 0f) n.toInt().toString() else n.toString()
 
     private val episodeExtraSetters by lazy {
         val clazz = SEpisode.create().javaClass
@@ -899,7 +896,9 @@ class Miruro :
 
     private fun extractAnilistIdFromPipeRequest(url: String): Int? = try {
         val encoded = url.substringAfter("e=", "")
-        if (encoded.isEmpty()) null else {
+        if (encoded.isEmpty()) {
+            null
+        } else {
             val decoded = Base64.decode(encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
             JSONObject(String(decoded)).optJSONObject("query")?.optInt("anilistId", -1)?.takeIf { it > 0 }
         }
@@ -930,10 +929,13 @@ class Miruro :
     private fun buildPipeQuery(vararg pairs: Pair<String, Any?>): JSONObject = JSONObject().apply {
         pairs.forEach { (k, v) ->
             if (v != null) {
-                put(k, when (v) {
-                    is Number, is String, is Boolean -> v
-                    else -> v.toString()
-                })
+                put(
+                    k,
+                    when (v) {
+                        is Number, is String, is Boolean -> v
+                        else -> v.toString()
+                    },
+                )
             }
         }
     }
