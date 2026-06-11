@@ -449,7 +449,7 @@ class Miruro :
                 titleObj.optString("userPreferred", "").trim(),
                 titleObj.optString("romaji", "").trim(),
                 titleObj.optString("english", "").trim(),
-                titleObj.optString("native", "").trim()
+                titleObj.optString("native", "").trim(),
             ).firstOrNull { it.isNotBlank() } ?: "Unknown Title"
         }
 
@@ -1340,4 +1340,4 @@ class JikanEpisodesDto(
         @SerialName("has_next_page") val hasNextPage: Boolean,
     )
 }
-}
+
