@@ -121,7 +121,6 @@ class Miruro :
         private const val PREF_ANILIST_EP_TITLES_TITLE = "AniList episode titles"
         private const val PREF_ANILIST_EP_TITLES_DEFAULT = true
 
-        // Country of origin (ISO 3166-1 alpha-2, as used by Miruro/AniList)
         private const val PREF_COUNTRY_KEY = "preferred_countries"
         private const val PREF_COUNTRY_TITLE = "Country of origin"
         private val PREF_COUNTRY_ENTRIES = listOf("Japan (Anime)", "China (Donghua)", "South Korea (Aeni)", "Taiwan")
@@ -132,10 +131,8 @@ class Miruro :
         private const val JIKAN_API_URL = "https://api.jikan.moe/v4"
         private const val ANIZIP_API_URL = "https://api.ani.zip/mappings"
 
-        // Matches AniList streamingEpisodes titles, e.g. "Episode 5 - The Title"
         private val EPISODE_TITLE_REGEX = Regex("""^Episode\s+(\d+(?:\.\d+)?)\s*[-–—:]\s*(.+)$""", RegexOption.IGNORE_CASE)
 
-        // Mirror domains are fetched from https://miruro.com/
         private const val PREF_MIRROR_KEY = "preferred_mirror"
         private const val PREF_MIRROR_TITLE = "Preferred mirror"
         private val MIRROR_ENTRIES = listOf("miruro.tv", "miruro.to", "miruro.bz", "miruro.ru")
@@ -147,11 +144,6 @@ class Miruro :
         .rateLimitHost("$JIKAN_API_URL/".toHttpUrl(), permits = 1, period = 1, unit = TimeUnit.SECONDS)
         .build()
 
-    /**
-     * Client with generous timeouts for metadata APIs (ani.zip / AniList).
-     * Large titles (One Piece, Bleach, ...) return ~1MB+ payloads which can
-     * exceed the default read timeout on slow connections.
-     */
     private val metaClient: OkHttpClient = network.client.newBuilder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(3, TimeUnit.MINUTES)
@@ -160,10 +152,6 @@ class Miruro :
         .retryOnConnectionFailure(true)
         .build()
 
-    /**
-     * Fetches a JSON document with the long-timeout [metaClient], retrying
-     * once on transient failures. Returns null instead of throwing.
-     */
     private fun fetchJsonWithRetry(request: Request, tag: String, attempts: Int = 2): JSONObject? {
         repeat(attempts) { attempt ->
             try {
@@ -172,7 +160,6 @@ class Miruro :
                         return JSONObject(resp.body.string())
                     }
                     Log.e("Miruro", "$tag request failed: HTTP ${resp.code} (attempt ${attempt + 1}/$attempts)")
-                    // Don't retry on client errors - they won't succeed
                     if (resp.code in 400..499) return null
                 }
             } catch (e: Exception) {
@@ -183,29 +170,17 @@ class Miruro :
         return null
     }
 
-    // ============================== Country ===============================
-
-    /** Country codes currently selected in settings, in stable order. */
     private val settingsCountries: List<String>
         get() {
             val selected = preferences.preferredCountries
             return PREF_COUNTRY_VALUES.filter { it in selected }
         }
 
-    /**
-     * Resolves the effective country list. A non-default value chosen in the
-     * search filter overrides the settings selection.
-     */
     private fun resolveCountries(filterCountry: String? = null): List<String> = when {
         filterCountry != null && filterCountry != "all" -> listOf(filterCountry)
         else -> settingsCountries
     }
 
-    /**
-     * Miruro's API only honors a single countryOfOrigin per request, so for
-     * multi-country selections we fetch each country in parallel and merge
-     * the pages (interleaved, de-duplicated, failures ignored per-country).
-     */
     private suspend fun fetchMergedPages(requests: List<Request>, parser: (Response) -> AnimesPage): AnimesPage {
         if (requests.size == 1) {
             return client.newCall(requests[0]).awaitSuccess().use(parser)
@@ -237,8 +212,6 @@ class Miruro :
         return AnimesPage(merged, pages.any { it.hasNextPage })
     }
 
-    // ============================== Trending ===============================
-
     private fun browseRequest(page: Int, sort: String, country: String? = null): Request {
         val query = buildPipeQuery(
             "type" to "ANIME",
@@ -267,8 +240,6 @@ class Miruro :
 
     override fun popularAnimeParse(response: Response): AnimesPage = parseAnimeListResponse(response)
 
-    // ============================== Latest ===============================
-
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
         val countries = settingsCountries
         if (countries.size <= 1) {
@@ -284,8 +255,6 @@ class Miruro :
     override fun latestUpdatesRequest(page: Int): Request = browseRequest(page, "UPDATED_AT_DESC", settingsCountries.firstOrNull())
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseAnimeListResponse(response)
-
-    // ============================== Search ===============================
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         if (query.startsWith("https://")) {
@@ -360,7 +329,6 @@ class Miruro :
             "countryOfOrigin" to country,
         )
 
-        // Apply filters — only add non-default values
         if (params.sort != "all") queryParams.put("sort", params.sort)
         if (params.season != "all") queryParams.put("season", params.season)
         if (params.year != "all") queryParams.put("year", params.year.toInt())
@@ -386,8 +354,6 @@ class Miruro :
 
     override fun searchAnimeParse(response: Response): AnimesPage = parseAnimeListResponse(response, fallbackKeys = listOf("results", "data"))
 
-    // ============================== Details ===============================
-
     override fun animeDetailsRequest(anime: SAnime): Request = buildPipeRequest("info/${anime.url}", "GET")
 
     override fun animeDetailsParse(response: Response): SAnime {
@@ -412,7 +378,6 @@ class Miruro :
         val thumbnail = extractCoverImage(media.opt("coverImage"))
         val bannerImage = extractBannerImage(media.opt("bannerImage"))
         val coverUrl = thumbnail.ifEmpty { bannerImage }
-            // Fall back to the AniList cover when Miruro has no image for this title.
             .ifEmpty { anilistId.takeIf { it > 0 }?.let { resolveAnilistMeta(it).coverImage }.orEmpty() }
 
         val description = if (preferences.stripHtml) {
@@ -461,8 +426,6 @@ class Miruro :
             author = studio
         }
     }
-
-    // ============================== Episodes ==============================
 
     override fun episodeListRequest(anime: SAnime): Request {
         val anilistId = anime.url.toInt()
@@ -611,8 +574,6 @@ class Miruro :
         }
     }
 
-    // ============================ Video Links ===========================
-
     @Volatile
     private var currentEpisodeData: JSONObject? = null
 
@@ -715,8 +676,6 @@ class Miruro :
         return videos
     }
 
-    // ============================== Preferences ===============================
-
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         addListPreference(
             screen = screen,
@@ -816,17 +775,13 @@ class Miruro :
         )
     }
 
-    // ============================== Helpers ===============================
-
     private fun resolveFillerEpisodes(anilistId: Int?, providers: JSONObject, preferredProvider: String): Set<Float> {
         if (anilistId == null) return emptySet()
 
-        // Try preferred provider first
         val preferredData = providers.optJSONObject(preferredProvider)
         preferredData?.let {
             val maxEp = findMaxEpisodeNumber(it)
             if (maxEp > 0) {
-                // Try to get MAL id from cached meta
                 val malId = cachedAnimeMeta?.malId ?: fetchMalId(anilistId)
                 if (malId != null) {
                     return fetchFillerEpisodes(malId, maxEp)
@@ -877,8 +832,6 @@ class Miruro :
         null
     }
 
-    // ============================== AniList metadata ==============================
-
     private fun anilistMetaRequest(anilistId: Int): Request {
         val query = $$"""
         query media($id: Int, $type: MediaType) {
@@ -907,12 +860,6 @@ class Miruro :
         return POST(ANILIST_GRAPHQL_URL, body = body)
     }
 
-    /**
-     * Fetches (and caches) AniList metadata for an anime: MAL id, cover image
-     * and official episode titles from streamingEpisodes.
-     * Never throws - on any failure it returns whatever is cached so the
-     * episode list still loads without AniList data.
-     */
     private fun resolveAnilistMeta(anilistId: Int): AnimeMeta {
         val cached = cachedAnimeMeta?.takeIf { it.anilistId == anilistId }
         if (cached != null && cached.anilistFetched) return cached
@@ -920,13 +867,12 @@ class Miruro :
         val meta = cached ?: AnimeMeta(anilistId).also { cachedAnimeMeta = it }
         val episodeMeta = mutableMapOf<Float, EpisodeMeta>()
 
-        // 1) ani.zip: rich per-episode metadata (title, thumbnail, overview)
         try {
             val json = fetchJsonWithRetry(GET("$ANIZIP_API_URL?anilist_id=$anilistId"), "ani.zip")
             val episodesObj = json?.optJSONObject("episodes")
             if (episodesObj != null) {
                 for (key in episodesObj.keys()) {
-                    val number = key.toFloatOrNull() ?: continue // skips specials like "S1"
+                    val number = key.toFloatOrNull() ?: continue
                     val ep = episodesObj.optJSONObject(key) ?: continue
 
                     val titleObj = ep.optJSONObject("title")
@@ -947,7 +893,6 @@ class Miruro :
             Log.e("Miruro", "Failed to fetch ani.zip metadata: ${e.message}")
         }
 
-        // 2) AniList: MAL id, cover and streamingEpisodes titles (fills gaps)
         try {
             val json = fetchJsonWithRetry(anilistMetaRequest(anilistId), "AniList")
             val media = json?.optJSONObject("data")?.optJSONObject("Media")
@@ -985,12 +930,6 @@ class Miruro :
 
     private fun formatEpisodeNumber(number: Float): String = if (number % 1f == 0f) number.toInt().toString() else number.toString()
 
-    /**
-     * Reflection accessors for optional SEpisode fields that only exist on
-     * newer app forks (Aniyomi mainline / Animetail): summary & preview_url.
-     * Resolved once against the app-provided runtime class; null when the
-     * running app doesn't support them so we silently no-op.
-     */
     private val episodeExtraSetters by lazy {
         val clazz = SEpisode.create().javaClass
         val summary = runCatching { clazz.getMethod("setSummary", String::class.java) }.getOrNull()
@@ -1008,10 +947,6 @@ class Miruro :
         }
     }
 
-    /**
-     * Enriches episodes with metadata: official titles, and (on apps that
-     * support it) thumbnails + descriptions.
-     */
     private fun applyAnilistEpisodeTitles(episodes: List<SEpisode>, anilistId: Int?): List<SEpisode> {
         if (anilistId == null || episodes.isEmpty()) return episodes
 
@@ -1075,8 +1010,6 @@ class Miruro :
         return fillerEpisodes
     }
 
-    // ============================== Pipe API ===============================
-
     private fun extractAnilistIdFromPipeRequest(url: String): Int? {
         return try {
             val encoded = url.substringAfter("e=", "")
@@ -1136,7 +1069,6 @@ class Miruro :
         val obfuscated = response.header("x-obfuscated") ?: "1"
         val bodyBytes = response.body.bytes()
 
-        // Base64url decode
         val bodyStr = String(bodyBytes, Charsets.UTF_8).trim()
         if (obfuscated != "2") {
             return bodyStr
@@ -1147,7 +1079,6 @@ class Miruro :
             (b.toInt() xor PIPE_KEY[i % PIPE_KEY.size].toInt()).toByte()
         }.toByteArray()
 
-        // Gzip decompress
         return GZIPInputStream(java.io.ByteArrayInputStream(data)).use { gzipStream ->
             gzipStream.bufferedReader(Charsets.UTF_8).readText()
         }
@@ -1223,7 +1154,6 @@ class Miruro :
         val titleStyle = preferences.preferredTitleStyle
         val title = resolveTitle(titleObj, titleStyle)
 
-        // Collect all possible titles for ultimate fallback
         val romaji = titleObj.optString("romaji", "").trim()
         val english = titleObj.optString("english", "").trim()
         val native = titleObj.optString("native", "").trim()
