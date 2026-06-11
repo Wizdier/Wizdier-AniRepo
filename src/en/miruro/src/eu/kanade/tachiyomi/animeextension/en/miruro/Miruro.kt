@@ -22,7 +22,6 @@ import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.decodeHex
 import keiyoushi.utils.delegate
 import keiyoushi.utils.getPreferencesLazy
-import keiyoushi.utils.getSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parallelMap
 import keiyoushi.utils.parseAs
