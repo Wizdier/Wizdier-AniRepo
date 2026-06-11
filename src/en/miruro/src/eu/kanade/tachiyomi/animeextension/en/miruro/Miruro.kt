@@ -444,8 +444,17 @@ class Miruro :
 
         val studio = extractMainStudio(media.opt("studios"))
 
+        val finalTitle = title.ifBlank {
+            listOf(
+                titleObj.optString("userPreferred", "").trim(),
+                titleObj.optString("romaji", "").trim(),
+                titleObj.optString("english", "").trim(),
+                titleObj.optString("native", "").trim()
+            ).firstOrNull { it.isNotBlank() } ?: "Unknown Title"
+        }
+
         return SAnime.create().apply {
-            title.takeIf(String::isNotBlank)?.let { this.title = it }
+            this.title = finalTitle
             thumbnail_url = coverUrl
             this.description = description
             genre = genres
@@ -1261,29 +1270,44 @@ class Miruro :
         return AnimesPage(animeList, animeList.size >= 20)
     }
 
-    private fun resolveTitle(titleObj: JSONObject, style: String): String = when (style) {
-        "romaji" -> titleObj.optString("romaji", "")
-        "english" -> titleObj.optString("english", "")
-        "native" -> titleObj.optString("native", "")
-        else -> titleObj.optString("userPreferred", titleObj.optString("romaji", ""))
-    }
+    private fun resolveTitle(titleObj: JSONObject, style: String): String {
+        val romaji = titleObj.optString("romaji", "").trim()
+        val english = titleObj.optString("english", "").trim()
+        val native = titleObj.optString("native", "").trim()
+        val userPreferred = titleObj.optString("userPreferred", "").trim()
 
+        return when (style) {
+            "romaji" -> romaji.ifEmpty { english.ifEmpty { native.ifEmpty { userPreferred } } }
+            "english" -> english.ifEmpty { romaji.ifEmpty { native.ifEmpty { userPreferred } } }
+            "native" -> native.ifEmpty { romaji.ifEmpty { english.ifEmpty { userPreferred } } }
+            else -> userPreferred.ifEmpty { romaji.ifEmpty { english.ifEmpty { native } } }
+        }
+    }
     private fun parseAnimeFromMedia(media: JSONObject): SAnime {
         val titleObj = media.optJSONObject("title") ?: JSONObject()
         val titleStyle = preferences.preferredTitleStyle
         val title = resolveTitle(titleObj, titleStyle)
+
+        // Collect all possible titles for ultimate fallback
+        val romaji = titleObj.optString("romaji", "").trim()
+        val english = titleObj.optString("english", "").trim()
+        val native = titleObj.optString("native", "").trim()
+        val userPreferred = titleObj.optString("userPreferred", "").trim()
+
+        val finalTitle = title.ifBlank {
+            listOf(userPreferred, romaji, english, native).firstOrNull { it.isNotBlank() } ?: "Unknown Title"
+        }
 
         val id = media.optInt("id", 0).toString()
         val thumbnail = extractCoverImage(media.opt("coverImage"))
         val bannerImage = extractBannerImage(media.opt("bannerImage"))
 
         return SAnime.create().apply {
-            this.title = title
-            thumbnail_url = thumbnail.ifEmpty { bannerImage }
+            this.title = finalTitle
+            thumbnail_url = thumbnail.ifEmpty { bannerImage.ifEmpty { null } }
             setUrlWithoutDomain(id)
         }
     }
-}
 
 @Serializable
 class AnilistMalIdResponse(
