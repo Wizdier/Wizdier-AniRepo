@@ -150,20 +150,25 @@ class Miruro :
         .retryOnConnectionFailure(true)
         .build()
 
-    private fun fetchJsonWithRetry(request: Request, tag: String, attempts: Int = 2): JSONObject? {
+    private fun fetchJsonWithRetry(request: Request, tag: String, attempts: Int = 3): JSONObject? {
         repeat(attempts) { attempt ->
             try {
                 metaClient.newCall(request).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        return JSONObject(resp.body.string())
+                    when {
+                        resp.isSuccessful -> return JSONObject(resp.body.string())
+                        resp.code in 500..599 || resp.code == 444 -> {
+                            Log.w("Miruro", "$tag got ${resp.code} (attempt ${attempt + 1}/$attempts)")
+                        }
+                        else -> {
+                            Log.e("Miruro", "$tag request failed: HTTP ${resp.code}")
+                            if (resp.code in 400..499) return null
+                        }
                     }
-                    Log.e("Miruro", "$tag request failed: HTTP ${resp.code}")
-                    if (resp.code in 400..499) return null
                 }
             } catch (e: Exception) {
-                Log.e("Miruro", "$tag request error: ${e.message}")
+                Log.e("Miruro", "$tag request error (attempt ${attempt + 1}/$attempts): ${e.message}")
             }
-            if (attempt < attempts - 1) Thread.sleep(1000)
+            if (attempt < attempts - 1) Thread.sleep(1200L)
         }
         return null
     }
@@ -171,7 +176,8 @@ class Miruro :
     private val settingsCountries: List<String>
         get() = PREF_COUNTRY_VALUES.filter { it in preferences.preferredCountries }
 
-    private fun resolveCountries(filterCountry: String? = null): List<String> = if (filterCountry != null && filterCountry != "all") listOf(filterCountry) else settingsCountries
+    private fun resolveCountries(filterCountry: String? = null): List<String> =
+        if (filterCountry != null && filterCountry != "all") listOf(filterCountry) else settingsCountries
 
     private suspend fun fetchMergedPages(requests: List<Request>, parser: (Response) -> AnimesPage): AnimesPage {
         if (requests.size == 1) {
@@ -182,7 +188,7 @@ class Miruro :
             runCatching {
                 client.newCall(request).awaitSuccess().use(parser)
             }.getOrElse {
-                Log.e("Miruro", "Country fetch failed: ${it.message}")
+                Log.e("Miruro", "Country page fetch failed: ${it.message}")
                 AnimesPage(emptyList(), false)
             }
         }
@@ -225,9 +231,11 @@ class Miruro :
         }
     }
 
-    override fun popularAnimeRequest(page: Int): Request = browseRequest(page, "TRENDING_DESC", settingsCountries.firstOrNull())
+    override fun popularAnimeRequest(page: Int): Request =
+        browseRequest(page, "TRENDING_DESC", settingsCountries.firstOrNull())
 
-    override fun popularAnimeParse(response: Response): AnimesPage = parseAnimeListResponse(response)
+    override fun popularAnimeParse(response: Response): AnimesPage =
+        parseAnimeListResponse(response)
 
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
         val countries = settingsCountries
@@ -238,9 +246,11 @@ class Miruro :
         }
     }
 
-    override fun latestUpdatesRequest(page: Int): Request = browseRequest(page, "UPDATED_AT_DESC", settingsCountries.firstOrNull())
+    override fun latestUpdatesRequest(page: Int): Request =
+        browseRequest(page, "UPDATED_AT_DESC", settingsCountries.firstOrNull())
 
-    override fun latestUpdatesParse(response: Response): AnimesPage = parseAnimeListResponse(response)
+    override fun latestUpdatesParse(response: Response): AnimesPage =
+        parseAnimeListResponse(response)
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         if (query.startsWith("https://")) {
@@ -275,12 +285,13 @@ class Miruro :
         }
     }
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = searchAnimeRequestWithCountry(
-        page,
-        query,
-        filters,
-        resolveCountries(MiruroFilters.getSearchParameters(filters).country).firstOrNull(),
-    )
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request =
+        searchAnimeRequestWithCountry(
+            page,
+            query,
+            filters,
+            resolveCountries(MiruroFilters.getSearchParameters(filters).country).firstOrNull()
+        )
 
     private fun searchAnimeRequestWithCountry(
         page: Int,
@@ -334,9 +345,11 @@ class Miruro :
         return buildPipeRequest("search/browse", "GET", query = queryParams)
     }
 
-    override fun searchAnimeParse(response: Response): AnimesPage = parseAnimeListResponse(response, listOf("results", "data"))
+    override fun searchAnimeParse(response: Response): AnimesPage =
+        parseAnimeListResponse(response, listOf("results", "data"))
 
-    override fun animeDetailsRequest(anime: SAnime): Request = buildPipeRequest("info/${anime.url}", "GET")
+    override fun animeDetailsRequest(anime: SAnime): Request =
+        buildPipeRequest("info/${anime.url}", "GET")
 
     override fun animeDetailsParse(response: Response): SAnime {
         val jsonObj = JSONObject(response.use(::decryptResponse))
@@ -748,10 +761,7 @@ class Miruro :
 
     private fun anilistMalIdRequest(anilistId: Int): Request {
         val query = $$"query media($id: Int, $type: MediaType) { Media(id: $id, type: $type) { idMal } }"
-        val variables = buildJsonObject {
-            put("id", anilistId)
-            put("type", "ANIME")
-        }
+        val variables = buildJsonObject { put("id", anilistId); put("type", "ANIME") }
         val body = FormBody.Builder()
             .add("query", query)
             .add("variables", kotlinx.serialization.json.Json.encodeToString(variables))
@@ -769,10 +779,7 @@ class Miruro :
 
     private fun anilistMetaRequest(anilistId: Int): Request {
         val query = $$"query media($id: Int, $type: MediaType) { Media(id: $id, type: $type) { idMal coverImage { extraLarge large medium } streamingEpisodes { title thumbnail } } }"
-        val variables = buildJsonObject {
-            put("id", anilistId)
-            put("type", "ANIME")
-        }
+        val variables = buildJsonObject { put("id", anilistId); put("type", "ANIME") }
         val body = FormBody.Builder()
             .add("query", query)
             .add("variables", kotlinx.serialization.json.Json.encodeToString(variables))
@@ -836,7 +843,8 @@ class Miruro :
         return meta
     }
 
-    private fun formatEpisodeNumber(n: Float): String = if (n % 1f == 0f) n.toInt().toString() else n.toString()
+    private fun formatEpisodeNumber(n: Float): String =
+        if (n % 1f == 0f) n.toInt().toString() else n.toString()
 
     private val episodeExtraSetters by lazy {
         val clazz = SEpisode.create().javaClass
@@ -896,9 +904,7 @@ class Miruro :
 
     private fun extractAnilistIdFromPipeRequest(url: String): Int? = try {
         val encoded = url.substringAfter("e=", "")
-        if (encoded.isEmpty()) {
-            null
-        } else {
+        if (encoded.isEmpty()) null else {
             val decoded = Base64.decode(encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
             JSONObject(String(decoded)).optJSONObject("query")?.optInt("anilistId", -1)?.takeIf { it > 0 }
         }
@@ -929,13 +935,10 @@ class Miruro :
     private fun buildPipeQuery(vararg pairs: Pair<String, Any?>): JSONObject = JSONObject().apply {
         pairs.forEach { (k, v) ->
             if (v != null) {
-                put(
-                    k,
-                    when (v) {
-                        is Number, is String, is Boolean -> v
-                        else -> v.toString()
-                    },
-                )
+                put(k, when (v) {
+                    is Number, is String, is Boolean -> v
+                    else -> v.toString()
+                })
             }
         }
     }
@@ -989,35 +992,43 @@ class Miruro :
         return AnimesPage((0 until arr.length()).map { parseAnimeFromMedia(arr.getJSONObject(it)) }, arr.length() >= 20)
     }
 
+    /**
+     * Improved resolveTitle with stronger fallback, especially for English titles.
+     */
     private fun resolveTitle(titleObj: JSONObject, style: String): String {
-        val r = titleObj.optString("romaji", "").trim()
-        val e = titleObj.optString("english", "").trim()
-        val n = titleObj.optString("native", "").trim()
-        val u = titleObj.optString("userPreferred", "").trim()
+        val romaji = titleObj.optString("romaji", "").trim()
+        val english = titleObj.optString("english", "").trim()
+        val native = titleObj.optString("native", "").trim()
+        val userPreferred = titleObj.optString("userPreferred", "").trim()
+
         return when (style) {
-            "romaji" -> r.ifEmpty { e.ifEmpty { n.ifEmpty { u } } }
-            "english" -> e.ifEmpty { r.ifEmpty { n.ifEmpty { u } } }
-            "native" -> n.ifEmpty { r.ifEmpty { e.ifEmpty { u } } }
-            else -> u.ifEmpty { r.ifEmpty { e.ifEmpty { n } } }
+            "romaji" -> romaji.ifEmpty { english.ifEmpty { native.ifEmpty { userPreferred } } }
+            "english" -> english.ifEmpty { romaji.ifEmpty { native.ifEmpty { userPreferred } } }
+            "native" -> native.ifEmpty { romaji.ifEmpty { english.ifEmpty { userPreferred } } }
+            else -> userPreferred.ifEmpty { romaji.ifEmpty { english.ifEmpty { native } } }
         }
     }
 
     private fun parseAnimeFromMedia(media: JSONObject): SAnime {
         val titleObj = media.optJSONObject("title") ?: JSONObject()
         val title = resolveTitle(titleObj, preferences.preferredTitleStyle)
-        val r = titleObj.optString("romaji", "").trim()
-        val e = titleObj.optString("english", "").trim()
-        val n = titleObj.optString("native", "").trim()
-        val u = titleObj.optString("userPreferred", "").trim()
+
+        val romaji = titleObj.optString("romaji", "").trim()
+        val english = titleObj.optString("english", "").trim()
+        val native = titleObj.optString("native", "").trim()
+        val userPreferred = titleObj.optString("userPreferred", "").trim()
+
         val finalTitle = title.ifBlank {
-            listOf(u, r, e, n).firstOrNull { it.isNotBlank() } ?: "Unknown Title"
+            listOf(userPreferred, romaji, english, native).firstOrNull { it.isNotBlank() } ?: "Unknown Title"
         }
+
         val id = media.optInt("id", 0).toString()
-        val thumb = extractCoverImage(media.opt("coverImage"))
-        val banner = extractBannerImage(media.opt("bannerImage"))
+        val thumbnail = extractCoverImage(media.opt("coverImage"))
+        val bannerImage = extractBannerImage(media.opt("bannerImage"))
+
         return SAnime.create().apply {
             this.title = finalTitle
-            thumbnail_url = thumb.ifEmpty { banner.ifEmpty { null } }
+            thumbnail_url = thumbnail.ifEmpty { bannerImage.ifEmpty { null } }
             setUrlWithoutDomain(id)
         }
     }
