@@ -154,7 +154,9 @@ class Miruro :
         repeat(attempts) { attempt ->
             try {
                 metaClient.newCall(request).execute().use { resp ->
-                    if (resp.isSuccessful) return JSONObject(resp.body.string())
+                    if (resp.isSuccessful) {
+                        return JSONObject(resp.body.string())
+                    }
                     Log.e("Miruro", "$tag request failed: HTTP ${resp.code}")
                     if (resp.code in 400..499) return null
                 }
@@ -173,11 +175,17 @@ class Miruro :
         if (filterCountry != null && filterCountry != "all") listOf(filterCountry) else settingsCountries
 
     private suspend fun fetchMergedPages(requests: List<Request>, parser: (Response) -> AnimesPage): AnimesPage {
-        if (requests.size == 1) return client.newCall(requests[0]).awaitSuccess().use(parser)
+        if (requests.size == 1) {
+            return client.newCall(requests[0]).awaitSuccess().use(parser)
+        }
 
         val pages = requests.parallelMap { request ->
-            runCatching { client.newCall(request).awaitSuccess().use(parser) }
-                .getOrElse { Log.e("Miruro", "Country fetch failed: ${it.message}"); AnimesPage(emptyList(), false) }
+            runCatching {
+                client.newCall(request).awaitSuccess().use(parser)
+            }.getOrElse {
+                Log.e("Miruro", "Country fetch failed: ${it.message}")
+                AnimesPage(emptyList(), false)
+            }
         }
 
         val seen = HashSet<String>()
@@ -197,11 +205,17 @@ class Miruro :
         return AnimesPage(merged, pages.any { it.hasNextPage })
     }
 
-    private fun browseRequest(page: Int, sort: String, country: String? = null): Request =
-        buildPipeRequest("search/browse", "GET", query = buildPipeQuery(
-            "type" to "ANIME", "status" to "RELEASING", "page" to page, "perPage" to 20,
-            "sort" to sort, "countryOfOrigin" to country
-        ))
+    private fun browseRequest(page: Int, sort: String, country: String? = null): Request {
+        val query = buildPipeQuery(
+            "type" to "ANIME",
+            "status" to "RELEASING",
+            "page" to page,
+            "perPage" to 20,
+            "sort" to sort,
+            "countryOfOrigin" to country,
+        )
+        return buildPipeRequest("search/browse", "GET", query = query)
+    }
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
         val countries = settingsCountries
@@ -271,9 +285,8 @@ class Miruro :
         }
 
         val params = MiruroFilters.getSearchParameters(filters)
-        val queryParams = buildPipeQuery(
-            "type" to "ANIME", "page" to page, "perPage" to 20, "countryOfOrigin" to country
-        )
+        val queryParams = buildPipeQuery("type" to "ANIME", "page" to page, "perPage" to 20, "countryOfOrigin" to country)
+
         if (params.sort != "all") queryParams.put("sort", params.sort)
         if (params.season != "all") queryParams.put("season", params.season)
         if (params.year != "all") queryParams.put("year", params.year.toInt())
@@ -317,6 +330,7 @@ class Miruro :
         }
 
         val genres = media.optJSONArray("genres")?.let { (0 until it.length()).mapNotNull { i -> it.optString(i) }.joinToString() }
+
         val status = when (media.optString("status", "").uppercase()) {
             "RELEASING" -> SAnime.ONGOING
             "FINISHED" -> SAnime.COMPLETED
@@ -324,6 +338,7 @@ class Miruro :
             "CANCELLED" -> SAnime.CANCELLED
             else -> SAnime.UNKNOWN
         }
+
         val studio = extractMainStudio(media.opt("studios"))
 
         val finalTitle = title.ifBlank {
@@ -372,13 +387,16 @@ class Miruro :
             for (key in providers.keys()) {
                 if (key == preferredProvider || key == "hop") continue
                 val other = parseEpisodesFromProvider(providers.getJSONObject(key), key, preferredSubType, fillerEpisodes)
-                other.filter { it.episode_number !in preferredNumbers }.let { episodes.addAll(it) }
+                episodes.addAll(other.filter { it.episode_number !in preferredNumbers })
             }
         } else if (episodes.isEmpty()) {
             for (key in providers.keys()) {
                 if (key == preferredProvider || key == "hop") continue
                 val other = parseEpisodesFromProvider(providers.getJSONObject(key), key, preferredSubType, fillerEpisodes)
-                if (other.isNotEmpty()) { episodes.addAll(other); break }
+                if (other.isNotEmpty()) {
+                    episodes.addAll(other)
+                    break
+                }
             }
         }
 
@@ -436,8 +454,15 @@ class Miruro :
             put("subTypes", JSONObject(subTypeIds))
         }
 
-        val audioLabels = subTypeIds.keys.map { when (it) { "sub" -> "Sub"; "dub" -> "Dub"; "ssub" -> "Soft Sub"; else -> it.replaceFirstChar { c -> c.uppercase() } } }
-            .sortedWith(compareBy { mapOf("Sub" to 0, "Dub" to 1)[it] ?: 2 })
+        val audioLabels = subTypeIds.keys.map {
+            when (it) {
+                "sub" -> "Sub"
+                "dub" -> "Dub"
+                "ssub" -> "Soft Sub"
+                else -> it.replaceFirstChar { c -> c.uppercase() }
+            }
+        }.sortedWith(compareBy { mapOf("Sub" to 0, "Dub" to 1)[it] ?: 2 })
+
         val isFiller = fillerEpisodes.contains(number.toFloat())
 
         return SEpisode.create().apply {
@@ -496,7 +521,12 @@ class Miruro :
     private fun parseStreamsFromResponse(response: Response, subType: String?): List<Video> {
         val json = JSONObject(response.use(::decryptResponse))
         val streams = json.optJSONArray("streams") ?: return emptyList()
-        val label = when (subType) { "sub" -> "Sub"; "dub" -> "Dub"; "ssub" -> "Soft Sub"; else -> subType?.replaceFirstChar { it.uppercase() } }
+        val label = when (subType) {
+            "sub" -> "Sub"
+            "dub" -> "Dub"
+            "ssub" -> "Soft Sub"
+            else -> subType?.replaceFirstChar { it.uppercase() }
+        }
 
         return (0 until streams.length()).mapNotNull { i ->
             val s = streams.getJSONObject(i)
@@ -611,13 +641,13 @@ class Miruro :
 
     private val episodeExtraSetters by lazy {
         val clazz = SEpisode.create().javaClass
-        clazz.getMethod("setSummary", String::class.java).let { it to clazz.getMethod("setPreview_url", String::class.java) }
+        clazz.getMethod("setSummary", String::class.java) to clazz.getMethod("setPreview_url", String::class.java)
     }
 
     private fun trySetEpisodeExtras(episode: SEpisode, summary: String?, previewUrl: String?) {
         try {
-            episodeExtraSetters.first?.invoke(episode, summary)
-            episodeExtraSetters.second?.invoke(episode, previewUrl)
+            episodeExtraSetters.first.invoke(episode, summary)
+            episodeExtraSetters.second.invoke(episode, previewUrl)
         } catch (e: Exception) { Log.e("Miruro", "Extras error: ${e.message}") }
     }
 
@@ -664,15 +694,29 @@ class Miruro :
 
     private fun buildPipeRequest(path: String, method: String = "GET", query: JSONObject = JSONObject(), body: JSONObject = JSONObject()): Request {
         val payload = JSONObject().apply {
-            put("path", path); put("method", method); put("query", query)
-            put("body", if (body.length() == 0) JSONObject.NULL else body); put("version", "0.2.0")
+            put("path", path)
+            put("method", method)
+            put("query", query)
+            put("body", if (body.length() == 0) JSONObject.NULL else body)
+            put("version", "0.2.0")
         }
         val encoded = Base64.encodeToString(payload.toString().toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         return GET("$baseUrl/api/secure/pipe?e=$encoded", Headers.headersOf("Accept", "*/*", "Referer", "$baseUrl/"))
     }
 
     private fun buildPipeQuery(vararg pairs: Pair<String, Any?>): JSONObject = JSONObject().apply {
-        pairs.forEach { (k, v) -> if (v != null) put(k, when (v) { is Int, is Long, is Double, is String, is Boolean -> v; else -> v.toString() }) }
+        pairs.forEach { (k, v) -> if (v != null) put(k, when (v) { is Number, is String, is Boolean -> v; else -> v.toString() }) }
+    }
+
+    private fun decryptResponse(response: Response): String {
+        val obfuscated = response.header("x-obfuscated") ?: "1"
+        val bodyBytes = response.body.bytes()
+        val bodyStr = String(bodyBytes, Charsets.UTF_8).trim()
+        if (obfuscated != "2") return bodyStr
+
+        val decoded = Base64.decode(bodyStr, Base64.URL_SAFE)
+        val data = decoded.mapIndexed { i, b -> (b.toInt() xor PIPE_KEY[i % PIPE_KEY.size].toInt()).toByte() }.toByteArray()
+        return GZIPInputStream(java.io.ByteArrayInputStream(data)).use { it.bufferedReader(Charsets.UTF_8).readText() }
     }
 
     private fun extractCoverImage(cover: Any?): String = when (cover) {
@@ -682,6 +726,7 @@ class Miruro :
     }
 
     private fun extractBannerImage(banner: Any?): String = if (banner is String) banner else ""
+
     private fun extractMainStudio(studios: Any?): String {
         val edges = when (studios) {
             is JSONObject -> studios.optJSONArray("edges")
@@ -697,7 +742,9 @@ class Miruro :
     private fun parseAnimeListResponse(response: Response, fallbackKeys: List<String> = emptyList()): AnimesPage {
         val json = response.use(::decryptResponse)
         val arr = try { JSONArray(json) } catch (_: Exception) {
-            JSONObject(json).let { obj -> obj.optJSONArray("media") ?: fallbackKeys.firstNotNullOfOrNull { obj.optJSONArray(it) } ?: return AnimesPage(emptyList(), false) }
+            JSONObject(json).let { obj ->
+                obj.optJSONArray("media") ?: fallbackKeys.firstNotNullOfOrNull { obj.optJSONArray(it) } ?: return AnimesPage(emptyList(), false)
+            }
         }
         return AnimesPage((0 until arr.length()).map { parseAnimeFromMedia(arr.getJSONObject(it)) }, arr.length() >= 20)
     }
