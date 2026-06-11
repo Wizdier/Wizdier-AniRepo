@@ -1340,3 +1340,4 @@ class JikanEpisodesDto(
         @SerialName("has_next_page") val hasNextPage: Boolean,
     )
 }
+}
