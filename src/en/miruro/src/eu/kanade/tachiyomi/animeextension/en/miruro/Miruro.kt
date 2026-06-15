@@ -674,105 +674,103 @@ class Miruro :
         return videos
     }
 
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        addListPreference(
-            screen = screen,
-            title = PREF_MIRROR_TITLE,
-            entries = MIRROR_ENTRIES.toTypedArray(),
-            entryValues = MIRROR_VALUES.toTypedArray(),
-            default = PREF_MIRROR_DEFAULT,
-            key = PREF_MIRROR_KEY,
-        ) { baseUrl = it }
+        override fun setupPreferenceScreen(screen: PreferenceScreen) {
+            screen.addListPreference(
+                PREF_MIRROR_KEY,
+                PREF_MIRROR_DEFAULT,
+                PREF_MIRROR_TITLE,
+                "",
+                MIRROR_ENTRIES,
+                MIRROR_VALUES
+            ) { baseUrl = it }
 
-        addListPreference(
-            screen = screen,
-            title = PREF_PROVIDER_TITLE,
-            entries = PREF_PROVIDER_ENTRIES.toTypedArray(),
-            entryValues = PREF_PROVIDER_VALUES.toTypedArray(),
-            default = PREF_PROVIDER_DEFAULT,
-            key = PREF_PROVIDER_KEY,
-        )
+            screen.addListPreference(
+                PREF_PROVIDER_KEY,
+                PREF_PROVIDER_DEFAULT,
+                PREF_PROVIDER_TITLE,
+                "",
+                PREF_PROVIDER_ENTRIES,
+                PREF_PROVIDER_VALUES
+            )
 
-        addListPreference(
-            screen = screen,
-            title = PREF_SUB_TYPE_TITLE,
-            entries = PREF_SUB_TYPE_ENTRIES.toTypedArray(),
-            entryValues = PREF_SUB_TYPE_VALUES.toTypedArray(),
-            default = PREF_SUB_TYPE_DEFAULT,
-            key = PREF_SUB_TYPE_KEY,
-        )
+            screen.addListPreference(
+                PREF_SUB_TYPE_KEY,
+                PREF_SUB_TYPE_DEFAULT,
+                PREF_SUB_TYPE_TITLE,
+                "",
+                PREF_SUB_TYPE_ENTRIES,
+                PREF_SUB_TYPE_VALUES
+            )
 
-        addListPreference(
-            screen = screen,
-            title = PREF_QUALITY_TITLE,
-            entries = PREF_QUALITY_ENTRIES.toTypedArray(),
-            entryValues = PREF_QUALITY_VALUES.toTypedArray(),
-            default = PREF_QUALITY_DEFAULT,
-            key = PREF_QUALITY_KEY,
-        )
+            screen.addListPreference(
+                PREF_QUALITY_KEY,
+                PREF_QUALITY_DEFAULT,
+                PREF_QUALITY_TITLE,
+                "",
+                PREF_QUALITY_ENTRIES,
+                PREF_QUALITY_VALUES
+            )
 
-        addListPreference(
-            screen = screen,
-            title = PREF_TITLE_STYLE_TITLE,
-            entries = PREF_TITLE_STYLE_ENTRIES.toTypedArray(),
-            entryValues = PREF_TITLE_STYLE_VALUES.toTypedArray(),
-            default = PREF_TITLE_STYLE_DEFAULT,
-            key = PREF_TITLE_STYLE_KEY,
-        )
+            screen.addListPreference(
+                PREF_TITLE_STYLE_KEY,
+                PREF_TITLE_STYLE_DEFAULT,
+                PREF_TITLE_STYLE_TITLE,
+                "",
+                PREF_TITLE_STYLE_ENTRIES,
+                PREF_TITLE_STYLE_VALUES
+            )
 
-        addSwitchPreference(
-            screen = screen,
-            title = PREF_MARK_FILLERS_TITLE,
-            default = PREF_MARK_FILLERS_DEFAULT,
-            key = PREF_MARK_FILLERS_KEY,
-        )
+            screen.addSwitchPreference(
+                PREF_MARK_FILLERS_KEY,
+                PREF_MARK_FILLERS_DEFAULT,
+                PREF_MARK_FILLERS_TITLE,
+                ""
+            )
 
-        addSwitchPreference(
-            screen = screen,
-            title = PREF_HIDE_FILLERS_TITLE,
-            default = PREF_HIDE_FILLERS_DEFAULT,
-            key = PREF_HIDE_FILLERS_KEY,
-        )
+            screen.addSwitchPreference(
+                PREF_HIDE_FILLERS_KEY,
+                PREF_HIDE_FILLERS_DEFAULT,
+                PREF_HIDE_FILLERS_TITLE,
+                ""
+            )
 
-        addSwitchPreference(
-            screen = screen,
-            title = PREF_INCLUDE_ALL_SUB_TYPES_TITLE,
-            default = PREF_INCLUDE_ALL_SUB_TYPES_DEFAULT,
-            key = PREF_INCLUDE_ALL_SUB_TYPES_KEY,
-        )
+            screen.addSwitchPreference(
+                PREF_INCLUDE_ALL_SUB_TYPES_KEY,
+                PREF_INCLUDE_ALL_SUB_TYPES_DEFAULT,
+                PREF_INCLUDE_ALL_SUB_TYPES_TITLE,
+                ""
+            )
 
-        addSwitchPreference(
-            screen = screen,
-            title = PREF_STRIP_HTML_TITLE,
-            default = PREF_STRIP_HTML_DEFAULT,
-            key = PREF_STRIP_HTML_KEY,
-        )
+            screen.addSwitchPreference(
+                PREF_STRIP_HTML_KEY,
+                PREF_STRIP_HTML_DEFAULT,
+                PREF_STRIP_HTML_TITLE,
+                ""
+            )
 
-        addSwitchPreference(
-            screen = screen,
-            title = PREF_MERGE_PROVIDERS_TITLE,
-            default = PREF_MERGE_PROVIDERS_DEFAULT,
-            key = PREF_MERGE_PROVIDERS_KEY,
-        )
+            screen.addSwitchPreference(
+                PREF_MERGE_PROVIDERS_KEY,
+                PREF_MERGE_PROVIDERS_DEFAULT,
+                PREF_MERGE_PROVIDERS_TITLE,
+                ""
+            )
 
-        addSwitchPreference(
-            screen = screen,
-            title = PREF_ANILIST_EP_TITLES_TITLE,
-            summary = "Use official episode titles from AniList when available.",
-            default = PREF_ANILIST_EP_TITLES_DEFAULT,
-            key = PREF_ANILIST_EP_TITLES_KEY,
-        )
+            screen.addSwitchPreference(
+                PREF_ANILIST_EP_TITLES_KEY,
+                PREF_ANILIST_EP_TITLES_DEFAULT,
+                PREF_ANILIST_EP_TITLES_TITLE,
+                "Use official episode titles from AniList when available."
+            )
 
-        addSetPreference(
-            screen = screen,
-            title = PREF_COUNTRY_TITLE,
-            entries = PREF_COUNTRY_ENTRIES.toTypedArray(),
-            entryValues = PREF_COUNTRY_VALUES.toTypedArray(),
-            default = PREF_COUNTRY_DEFAULT,
-            key = PREF_COUNTRY_KEY,
-        )
-    }
-
+            screen.addSetPreference(
+                PREF_COUNTRY_KEY,
+                PREF_COUNTRY_DEFAULT,
+                PREF_COUNTRY_TITLE,
+                "",
+                PREF_COUNTRY_ENTRIES,
+                PREF_COUNTRY_VALUES
+            )
+        }
     private fun resolveFillerEpisodes(anilistId: Int?, providers: JSONObject, preferredProvider: String): Set<Float> {
         if (anilistId == null) return emptySet()
 
