@@ -876,8 +876,8 @@ class Miruro :
 
     private fun anilistMalIdRequest(anilistId: Int): Request {
         val query = $$"""
-            query media($$id: Int, $$type: MediaType) {
-                Media(id: $$id, type: $$type) {
+            query media($id: Int, $type: MediaType) {
+                Media(id: $id, type: $type) {
                     idMal
                 }
             }
@@ -903,8 +903,8 @@ class Miruro :
 
     private fun anilistMetaRequest(anilistId: Int): Request {
         val query = $$"""
-            query media($$id: Int, $$type: MediaType) {
-                Media(id: $$id, type: $$type) {
+            query media($id: Int, $type: MediaType) {
+                Media(id: $id, type: $type) {
                     idMal
                     coverImage {
                         extraLarge
