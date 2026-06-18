@@ -254,6 +254,8 @@ class Miruro :
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseAnimeListResponse(response)
 
+    // ============================== Search ===============================
+
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         if (query.startsWith("https://")) {
             val url = query.toHttpUrl()
@@ -352,6 +354,8 @@ class Miruro :
 
     override fun searchAnimeParse(response: Response): AnimesPage = parseAnimeListResponse(response, fallbackKeys = listOf("results", "data"))
 
+    // ============================== Details ===============================
+
     override fun animeDetailsRequest(anime: SAnime): Request = buildPipeRequest("info/${anime.url}", "GET")
 
     override fun animeDetailsParse(response: Response): SAnime {
@@ -424,6 +428,8 @@ class Miruro :
             author = studio
         }
     }
+
+    // ============================== Episodes ==============================
 
     override fun episodeListRequest(anime: SAnime): Request {
         val anilistId = anime.url.toInt()
@@ -572,6 +578,8 @@ class Miruro :
         }
     }
 
+    // ============================ Video Links ============================
+
     @Volatile
     private var currentEpisodeData: JSONObject? = null
 
@@ -665,130 +673,195 @@ class Miruro :
             val url = stream.optString("url", "")
             if (url.isEmpty()) continue
 
-            val quality = stream.optString("quality", "")
-            val label = if (subTypeLabel != null) "$quality • $subTypeLabel" else quality
+            val qualityStr = stream.optString("quality", "")
+            val quality = qualityStr.toIntOrNull() ?: 0
+            val resolution = stream.optJSONObject("resolution")
+            val width = resolution?.optInt("width", 0) ?: 0
+            val height = resolution?.optInt("height", 0) ?: 0
+            val codec = stream.optString("codec", "")
+            val audio = stream.optString("audio", "")
+            val fansub = stream.optString("fansub", "")
+            val referer = stream.optString("referer", "https://kwik.cx/")
 
-            videos.add(Video(url, label, url))
+            val qualityLabel = buildString {
+                append("${quality}p")
+                if (subTypeLabel != null) append(" $subTypeLabel")
+                if (width > 0 && height > 0) append(" - ${width}x$height")
+                if (codec.isNotEmpty()) append(" $codec")
+                if (audio.isNotEmpty()) append(" $audio")
+                if (fansub.isNotEmpty()) append(" $fansub")
+            }
+
+            val videoHeaders = headers.newBuilder().set("Referer", referer).build()
+            videos.add(Video(url, qualityLabel, url, videoHeaders))
         }
 
         return videos
     }
 
-        override fun setupPreferenceScreen(screen: PreferenceScreen) {
-            screen.addListPreference(
-                PREF_MIRROR_KEY,
-                PREF_MIRROR_DEFAULT,
-                PREF_MIRROR_TITLE,
-                "",
-                MIRROR_ENTRIES,
-                MIRROR_VALUES
-            ) { baseUrl = it }
-
-            screen.addListPreference(
-                PREF_PROVIDER_KEY,
-                PREF_PROVIDER_DEFAULT,
-                PREF_PROVIDER_TITLE,
-                "",
-                PREF_PROVIDER_ENTRIES,
-                PREF_PROVIDER_VALUES
-            )
-
-            screen.addListPreference(
-                PREF_SUB_TYPE_KEY,
-                PREF_SUB_TYPE_DEFAULT,
-                PREF_SUB_TYPE_TITLE,
-                "",
-                PREF_SUB_TYPE_ENTRIES,
-                PREF_SUB_TYPE_VALUES
-            )
-
-            screen.addListPreference(
-                PREF_QUALITY_KEY,
-                PREF_QUALITY_DEFAULT,
-                PREF_QUALITY_TITLE,
-                "",
-                PREF_QUALITY_ENTRIES,
-                PREF_QUALITY_VALUES
-            )
-
-            screen.addListPreference(
-                PREF_TITLE_STYLE_KEY,
-                PREF_TITLE_STYLE_DEFAULT,
-                PREF_TITLE_STYLE_TITLE,
-                "",
-                PREF_TITLE_STYLE_ENTRIES,
-                PREF_TITLE_STYLE_VALUES
-            )
-
-            screen.addSwitchPreference(
-                PREF_MARK_FILLERS_KEY,
-                PREF_MARK_FILLERS_DEFAULT,
-                PREF_MARK_FILLERS_TITLE,
-                ""
-            )
-
-            screen.addSwitchPreference(
-                PREF_HIDE_FILLERS_KEY,
-                PREF_HIDE_FILLERS_DEFAULT,
-                PREF_HIDE_FILLERS_TITLE,
-                ""
-            )
-
-            screen.addSwitchPreference(
-                PREF_INCLUDE_ALL_SUB_TYPES_KEY,
-                PREF_INCLUDE_ALL_SUB_TYPES_DEFAULT,
-                PREF_INCLUDE_ALL_SUB_TYPES_TITLE,
-                ""
-            )
-
-            screen.addSwitchPreference(
-                PREF_STRIP_HTML_KEY,
-                PREF_STRIP_HTML_DEFAULT,
-                PREF_STRIP_HTML_TITLE,
-                ""
-            )
-
-            screen.addSwitchPreference(
-                PREF_MERGE_PROVIDERS_KEY,
-                PREF_MERGE_PROVIDERS_DEFAULT,
-                PREF_MERGE_PROVIDERS_TITLE,
-                ""
-            )
-
-            screen.addSwitchPreference(
-                PREF_ANILIST_EP_TITLES_KEY,
-                PREF_ANILIST_EP_TITLES_DEFAULT,
-                PREF_ANILIST_EP_TITLES_TITLE,
-                "Use official episode titles from AniList when available."
-            )
-
-            screen.addSetPreference(
-                PREF_COUNTRY_KEY,
-                PREF_COUNTRY_DEFAULT,
-                PREF_COUNTRY_TITLE,
-                "",
-                PREF_COUNTRY_ENTRIES,
-                PREF_COUNTRY_VALUES
-            )
+    override fun List<Video>.sort(): List<Video> {
+        val quality = preferences.preferredQuality
+        val subTypeLabel = when (preferences.preferredSubType) {
+            "sub" -> "Sub"
+            "dub" -> "Dub"
+            "ssub" -> "Soft Sub"
+            else -> preferences.preferredSubType.replaceFirstChar { it.uppercase() }
         }
+
+        return sortedWith(
+            compareBy(
+                { it.quality.contains(subTypeLabel) },
+                { it.quality.contains(quality) },
+            ),
+        ).reversed()
+    }
+
+    // ============================== URL ==============================
+
+    override fun getAnimeUrl(anime: SAnime): String = "$baseUrl/watch/${anime.url}"
+
+    // ============================== Filters ==============================
+
+    override fun getFilterList(): AnimeFilterList = MiruroFilters.FILTER_LIST
+
+    // ============================== Preferences ==============================
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        screen.addListPreference(
+            key = PREF_MIRROR_KEY,
+            title = PREF_MIRROR_TITLE,
+            entries = MIRROR_ENTRIES,
+            entryValues = MIRROR_VALUES,
+            default = PREF_MIRROR_DEFAULT,
+            summary = "%s",
+        ) {
+            baseUrl = it
+        }
+
+        screen.addListPreference(
+            key = PREF_PROVIDER_KEY,
+            title = PREF_PROVIDER_TITLE,
+            entries = PREF_PROVIDER_ENTRIES,
+            entryValues = PREF_PROVIDER_VALUES,
+            default = PREF_PROVIDER_DEFAULT,
+            summary = "%s",
+        )
+
+        screen.addListPreference(
+            key = PREF_SUB_TYPE_KEY,
+            title = PREF_SUB_TYPE_TITLE,
+            entries = PREF_SUB_TYPE_ENTRIES,
+            entryValues = PREF_SUB_TYPE_VALUES,
+            default = PREF_SUB_TYPE_DEFAULT,
+            summary = "%s",
+        )
+
+        screen.addListPreference(
+            key = PREF_QUALITY_KEY,
+            title = PREF_QUALITY_TITLE,
+            entries = PREF_QUALITY_ENTRIES,
+            entryValues = PREF_QUALITY_VALUES,
+            default = PREF_QUALITY_DEFAULT,
+            summary = "%s",
+        )
+
+        screen.addListPreference(
+            key = PREF_TITLE_STYLE_KEY,
+            title = PREF_TITLE_STYLE_TITLE,
+            entries = PREF_TITLE_STYLE_ENTRIES,
+            entryValues = PREF_TITLE_STYLE_VALUES,
+            default = PREF_TITLE_STYLE_DEFAULT,
+            summary = "%s",
+        )
+
+        screen.addSwitchPreference(
+            key = PREF_MARK_FILLERS_KEY,
+            title = PREF_MARK_FILLERS_TITLE,
+            default = PREF_MARK_FILLERS_DEFAULT,
+            summary = "Requires fetching episode data from Anilist, which may take some time.",
+        )
+
+        screen.addSwitchPreference(
+            key = PREF_HIDE_FILLERS_KEY,
+            title = PREF_HIDE_FILLERS_TITLE,
+            default = PREF_HIDE_FILLERS_DEFAULT,
+            summary = "Hides filler episodes from the episode list.",
+        )
+
+        screen.addSwitchPreference(
+            key = PREF_INCLUDE_ALL_SUB_TYPES_KEY,
+            title = PREF_INCLUDE_ALL_SUB_TYPES_TITLE,
+            default = PREF_INCLUDE_ALL_SUB_TYPES_DEFAULT,
+            summary = "When disabled, only fetches streams for the preferred sub type.",
+        )
+
+        screen.addSwitchPreference(
+            key = PREF_STRIP_HTML_KEY,
+            title = PREF_STRIP_HTML_TITLE,
+            default = PREF_STRIP_HTML_DEFAULT,
+            summary = "Strips HTML tags from anime descriptions.",
+        )
+
+        screen.addSwitchPreference(
+            key = PREF_MERGE_PROVIDERS_KEY,
+            title = PREF_MERGE_PROVIDERS_TITLE,
+            default = PREF_MERGE_PROVIDERS_DEFAULT,
+            summary = "Adds episodes from other providers that are missing from the preferred provider.",
+        )
+
+        screen.addSwitchPreference(
+            key = PREF_ANILIST_EP_TITLES_KEY,
+            title = PREF_ANILIST_EP_TITLES_TITLE,
+            default = PREF_ANILIST_EP_TITLES_DEFAULT,
+            summary = "Use official episode titles from AniList when available.",
+        )
+
+        screen.addSetPreference(
+            key = PREF_COUNTRY_KEY,
+            title = PREF_COUNTRY_TITLE,
+            entries = PREF_COUNTRY_ENTRIES,
+            entryValues = PREF_COUNTRY_VALUES,
+            default = PREF_COUNTRY_DEFAULT,
+            summary = "Select countries to include in popular/latest (multi-country merge).",
+        )
+    }
+
+    // ============================== Helpers ==============================
+
+    // ============================== Filler ===============================
+
     private fun resolveFillerEpisodes(anilistId: Int?, providers: JSONObject, preferredProvider: String): Set<Float> {
         if (anilistId == null) return emptySet()
 
-        val preferredData = providers.optJSONObject(preferredProvider)
-        preferredData?.let {
-            val maxEp = findMaxEpisodeNumber(it)
-            if (maxEp > 0) {
-                val malId = cachedAnimeMeta?.malId ?: fetchMalId(anilistId)
-                if (malId != null) {
-                    return fetchFillerEpisodes(malId, maxEp)
-                }
-            }
+        val meta = cachedAnimeMeta
+        if (meta != null && meta.anilistId == anilistId && meta.fillerEpisodes != null) {
+            return meta.fillerEpisodes!!
         }
 
-        return emptySet()
+        val existing = meta?.takeIf { it.anilistId == anilistId }
+        val malId = existing?.malId
+            ?: fetchMalId(anilistId)
+
+        if (existing != null) {
+            existing.malId = malId
+        } else if (malId != null) {
+            cachedAnimeMeta = AnimeMeta(anilistId, malId)
+        }
+
+        if (malId == null) {
+            existing?.let { it.fillerEpisodes = emptySet() }
+            return emptySet()
+        }
+
+        val maxEp = findMaxEpisodeNumber(providers, preferredProvider)
+        val fillers = fetchFillerEpisodes(malId, maxEp)
+
+        cachedAnimeMeta?.takeIf { it.anilistId == anilistId }?.let { it.fillerEpisodes = fillers }
+        return fillers
     }
 
-    private fun findMaxEpisodeNumber(providerData: JSONObject): Float {
+    private fun findMaxEpisodeNumber(providers: JSONObject, preferredProvider: String): Float {
+        val providerData = providers.optJSONObject(preferredProvider) ?: return 0f
         val episodesObj = providerData.optJSONObject("episodes") ?: return 0f
         var max = 0f
         for (key in episodesObj.keys()) {
@@ -802,7 +875,7 @@ class Miruro :
     }
 
     private fun anilistMalIdRequest(anilistId: Int): Request {
-        val query = $$"""
+        val query = """
         query media($id: Int, $type: MediaType) {
             Media(id: $id, type: $type) {
                 idMal
@@ -829,7 +902,7 @@ class Miruro :
     }
 
     private fun anilistMetaRequest(anilistId: Int): Request {
-        val query = $$"""
+        val query = """
         query media($id: Int, $type: MediaType) {
             Media(id: $id, type: $type) {
                 idMal
@@ -1005,6 +1078,8 @@ class Miruro :
 
         return fillerEpisodes
     }
+
+    // ============================== Pipe API ===============================
 
     private fun extractAnilistIdFromPipeRequest(url: String): Int? {
         return try {
