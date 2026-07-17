@@ -11,7 +11,6 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
@@ -31,8 +30,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -111,7 +108,6 @@ class AniDB :
     override val client = network.client.newBuilder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
-        .addInterceptor(AniDBCloudflareInterceptor(network.client) { baseUrl })
         .build()
 
     private val jikanClient: OkHttpClient = network.client.newBuilder()
@@ -714,22 +710,5 @@ class AniDB :
         private const val ANIZIP_API_URL = "https://api.ani.zip/mappings"
 
         private val EPISODE_TITLE_REGEX = Regex("""^Episode\s+(\d+(?:\.\d+)?)\s*[-–—:]\s*(.+)$""", RegexOption.IGNORE_CASE)
-    }
-}
-
-class AniDBCloudflareInterceptor(
-    private val client: OkHttpClient,
-    private val baseUrlProvider: () -> String,
-) : Interceptor {
-    private val cfInterceptor = CloudflareInterceptor(client)
-
-    override fun intercept(chain: Interceptor.Chain): Response {
-        val request = chain.request()
-        val isBaseUrl = request.url.host == baseUrlProvider().toHttpUrlOrNull()?.host
-        return if (isBaseUrl) {
-            cfInterceptor.intercept(chain)
-        } else {
-            chain.proceed(request)
-        }
     }
 }
