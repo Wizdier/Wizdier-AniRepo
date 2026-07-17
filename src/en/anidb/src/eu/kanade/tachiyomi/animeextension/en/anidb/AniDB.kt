@@ -158,6 +158,7 @@ class AniDB :
     )
 
     private data class AnimeMeta(
+        val anidbId: Int? = null,
         val anilistId: Int? = null,
         var malId: Int? = null,
         var fillerEpisodes: Set<Float>? = null,
@@ -367,44 +368,23 @@ class AniDB :
         if (anidbId == null) return emptySet()
 
         val meta = cachedAnimeMeta
-        if (meta != null && meta.anilistId == anidbId && meta.fillerEpisodes != null) {
+        if (meta != null && meta.anidbId == anidbId && meta.fillerEpisodes != null) {
             return meta.fillerEpisodes!!
         }
 
-        // Try to resolve MAL ID via AniList
-        val anilistId = meta?.anilistId ?: anidbId
-        val malId = meta?.malId ?: fetchMalId(anilistId)
+        // Resolve MAL ID via ani.zip (which supports anidb_id directly)
+        val resolvedMeta = resolveAnizipMeta(anidbId)
+        val malId = resolvedMeta.malId
         if (malId == null) {
-            cachedAnimeMeta = AnimeMeta(anilistId = anidbId, malId = null, fillerEpisodes = emptySet())
+            cachedAnimeMeta = AnimeMeta(anidbId = anidbId, malId = null, fillerEpisodes = emptySet())
             return emptySet()
         }
 
         val maxEp = episodes.maxOfOrNull { it.number } ?: Float.MAX_VALUE
         val fillers = fetchFillerEpisodes(malId, maxEp)
 
-        cachedAnimeMeta = AnimeMeta(anilistId = anidbId, malId = malId, fillerEpisodes = fillers)
+        cachedAnimeMeta = AnimeMeta(anidbId = anidbId, malId = malId, fillerEpisodes = fillers)
         return fillers
-    }
-
-    private fun fetchMalId(anilistId: Int): Int? = try {
-        val query = """
-            query media(${'$'}id: Int, ${'$'}type: MediaType) {
-                Media(id: ${'$'}id, type: ${'$'}type) { idMal }
-            }
-        """.trimIndent()
-        val variables = buildJsonObject {
-            put("id", anilistId)
-            put("type", "ANIME")
-        }
-        val body = FormBody.Builder()
-            .add("query", query)
-            .add("variables", kotlinx.serialization.json.Json.encodeToString(variables))
-            .build()
-        metaClient.newCall(POST(ANILIST_GRAPHQL_URL, body = body)).execute()
-            .parseAs<AnilistMalIdResponse>().data.media.idMal
-    } catch (e: Exception) {
-        Log.e("AniDB", "Failed to resolve MAL ID: ${e.message}")
-        null
     }
 
     private fun fetchFillerEpisodes(malId: Int, maxEpisode: Float = Float.MAX_VALUE): Set<Float> {
@@ -443,40 +423,59 @@ class AniDB :
 
     // ============================ AniList Meta ============================
 
-    private fun resolveAnilistMeta(anilistId: Int?): AnimeMeta {
-        if (anilistId == null) return AnimeMeta()
+    private fun resolveAnilistMeta(anidbId: Int?): AnimeMeta {
+        if (anidbId == null) return AnimeMeta()
 
-        val cached = cachedAnimeMeta?.takeIf { it.anilistId == anilistId && it.anilistFetched }
+        val cached = cachedAnimeMeta?.takeIf { it.anidbId == anidbId && it.anilistFetched }
         if (cached != null) return cached
 
-        val meta = cachedAnimeMeta?.takeIf { it.anilistId == anilistId }
-            ?: AnimeMeta(anilistId = anilistId).also { cachedAnimeMeta = it }
+        val meta = cachedAnimeMeta?.takeIf { it.anidbId == anidbId }
+            ?: AnimeMeta(anidbId = anidbId).also { cachedAnimeMeta = it }
 
         val episodeMeta = mutableMapOf<Float, EpisodeMeta>()
 
-        // Fetch from ani.zip
+        // Step 1: Fetch from ani.zip using anidb_id (NOT anilist_id!)
+        // ani.zip supports anidb_id directly and returns:
+        //   - mappings.anilist_id, mappings.mal_id (for subsequent lookups)
+        //   - episodes.{N}.title.{en,x-jat,ja} (episode titles)
+        //   - episodes.{N}.image (thumbnails)
+        //   - episodes.{N}.overview (descriptions)
+        var anilistId: Int? = null
+        var malId: Int? = null
+
         try {
             val json = fetchJsonWithRetry(
-                GET("$ANIZIP_API_URL?anilist_id=$anilistId"),
+                GET("$ANIZIP_API_URL?anidb_id=$anidbId"),
                 "ani.zip",
             )
-            val episodesObj = json?.optJSONObject("episodes")
-            if (episodesObj != null) {
-                for (key in episodesObj.keys()) {
-                    val number = key.toFloatOrNull() ?: continue
-                    val ep = episodesObj.optJSONObject(key) ?: continue
+            if (json != null) {
+                // Extract AniList/MAL IDs from mappings
+                val mappings = json.optJSONObject("mappings")
+                if (mappings != null) {
+                    anilistId = mappings.optInt("anilist_id", 0).takeIf { it > 0 }
+                    malId = mappings.optInt("mal_id", 0).takeIf { it > 0 }
+                    meta.malId = malId
+                }
 
-                    val titleObj = ep.optJSONObject("title")
-                    val title = titleObj?.optString("en").orEmpty()
-                        .ifEmpty { titleObj?.optString("x-jat").orEmpty() }
-                        .ifEmpty { titleObj?.optString("ja").orEmpty() }
-                        .takeIf { it.isNotBlank() && !it.startsWith("Episode ", ignoreCase = true) }
+                // Extract episode metadata
+                val episodesObj = json.optJSONObject("episodes")
+                if (episodesObj != null) {
+                    for (key in episodesObj.keys()) {
+                        val number = key.toFloatOrNull() ?: continue
+                        val ep = episodesObj.optJSONObject(key) ?: continue
 
-                    val thumbnail = ep.optString("image").takeIf(String::isNotBlank)
-                    val overview = ep.optString("overview").takeIf(String::isNotBlank)
+                        val titleObj = ep.optJSONObject("title")
+                        val title = titleObj?.optString("en").orEmpty()
+                            .ifEmpty { titleObj?.optString("x-jat").orEmpty() }
+                            .ifEmpty { titleObj?.optString("ja").orEmpty() }
+                            .takeIf { it.isNotBlank() && !it.startsWith("Episode ", ignoreCase = true) }
 
-                    if (title != null || thumbnail != null || overview != null) {
-                        episodeMeta[number] = EpisodeMeta(title, thumbnail, overview)
+                        val thumbnail = ep.optString("image").takeIf(String::isNotBlank)
+                        val overview = ep.optString("overview").takeIf(String::isNotBlank)
+
+                        if (title != null || thumbnail != null || overview != null) {
+                            episodeMeta[number] = EpisodeMeta(title, thumbnail, overview)
+                        }
                     }
                 }
             }
@@ -484,53 +483,79 @@ class AniDB :
             Log.e("AniDB", "Failed to fetch ani.zip metadata: ${e.message}")
         }
 
-        // Fetch from AniList
-        try {
-            val query = """
-                query media(${'$'}id: Int, ${'$'}type: MediaType) {
-                    Media(id: ${'$'}id, type: ${'$'}type) {
-                        idMal
-                        streamingEpisodes { title thumbnail }
+        // Step 2: Fetch from AniList GraphQL using the resolved AniList ID
+        // (NOT the AniDB ID — they're different numbering systems!)
+        if (anilistId != null) {
+            try {
+                val query = """
+                    query media(${'$'}id: Int, ${'$'}type: MediaType) {
+                        Media(id: ${'$'}id, type: ${'$'}type) {
+                            idMal
+                            streamingEpisodes { title thumbnail }
+                        }
+                    }
+                """.trimIndent()
+                val variables = buildJsonObject {
+                    put("id", anilistId)
+                    put("type", "ANIME")
+                }
+                val body = FormBody.Builder()
+                    .add("query", query)
+                    .add("variables", kotlinx.serialization.json.Json.encodeToString(variables))
+                    .build()
+
+                val json = fetchJsonWithRetry(POST(ANILIST_GRAPHQL_URL, body = body), "AniList")
+                val media = json?.optJSONObject("data")?.optJSONObject("Media")
+                if (media != null) {
+                    media.optInt("idMal", 0).takeIf { it > 0 }?.let { meta.malId = it }
+
+                    val streamingEpisodes = media.optJSONArray("streamingEpisodes")
+                    if (streamingEpisodes != null) {
+                        for (i in 0 until streamingEpisodes.length()) {
+                            val epObj = streamingEpisodes.optJSONObject(i) ?: continue
+                            val rawTitle = epObj.optString("title").orEmpty()
+                            val match = EPISODE_TITLE_REGEX.find(rawTitle) ?: continue
+                            val number = match.groupValues[1].toFloatOrNull() ?: continue
+                            val title = match.groupValues[2].trim()
+                            val thumbnail = epObj.optString("thumbnail").takeIf(String::isNotBlank)
+
+                            val existing = episodeMeta.getOrPut(number) { EpisodeMeta() }
+                            if (existing.title.isNullOrEmpty() && title.isNotEmpty()) existing.title = title
+                            if (existing.thumbnail.isNullOrEmpty()) existing.thumbnail = thumbnail
+                        }
                     }
                 }
-            """.trimIndent()
-            val variables = buildJsonObject {
-                put("id", anilistId)
-                put("type", "ANIME")
+            } catch (e: Exception) {
+                Log.e("AniDB", "Failed to fetch AniList metadata: ${e.message}")
             }
-            val body = FormBody.Builder()
-                .add("query", query)
-                .add("variables", kotlinx.serialization.json.Json.encodeToString(variables))
-                .build()
-
-            val json = fetchJsonWithRetry(POST(ANILIST_GRAPHQL_URL, body = body), "AniList")
-            val media = json?.optJSONObject("data")?.optJSONObject("Media")
-            if (media != null) {
-                media.optInt("idMal", 0).takeIf { it > 0 }?.let { meta.malId = it }
-
-                val streamingEpisodes = media.optJSONArray("streamingEpisodes")
-                if (streamingEpisodes != null) {
-                    for (i in 0 until streamingEpisodes.length()) {
-                        val epObj = streamingEpisodes.optJSONObject(i) ?: continue
-                        val rawTitle = epObj.optString("title").orEmpty()
-                        val match = EPISODE_TITLE_REGEX.find(rawTitle) ?: continue
-                        val number = match.groupValues[1].toFloatOrNull() ?: continue
-                        val title = match.groupValues[2].trim()
-                        val thumbnail = epObj.optString("thumbnail").takeIf(String::isNotBlank)
-
-                        val existing = episodeMeta.getOrPut(number) { EpisodeMeta() }
-                        if (existing.title.isNullOrEmpty() && title.isNotEmpty()) existing.title = title
-                        if (existing.thumbnail.isNullOrEmpty()) existing.thumbnail = thumbnail
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("AniDB", "Failed to fetch AniList metadata: ${e.message}")
         }
 
         meta.episodeMeta = episodeMeta
         meta.anilistFetched = true
         return meta
+    }
+
+    /**
+     * Fetch ani.zip metadata using AniDB ID directly.
+     * Returns the MAL ID for filler lookup, or null if not found.
+     */
+    private fun resolveAnizipMeta(anidbId: Int): AnimeMeta {
+        val cached = cachedAnimeMeta?.takeIf { it.anidbId == anidbId && it.anilistFetched }
+        if (cached != null) return cached
+
+        return try {
+            val json = fetchJsonWithRetry(
+                GET("$ANIZIP_API_URL?anidb_id=$anidbId"),
+                "ani.zip",
+            )
+            val mappings = json?.optJSONObject("mappings")
+            val malId = mappings?.optInt("mal_id", 0)?.takeIf { it > 0 }
+            val anilistId = mappings?.optInt("anilist_id", 0)?.takeIf { it > 0 }
+            AnimeMeta(anidbId = anidbId, anilistId = anilistId, malId = malId)
+        } catch (e: Exception) {
+            Log.e("AniDB", "Failed to fetch ani.zip for MAL ID: ${e.message}")
+            AnimeMeta(anidbId = anidbId)
+        }
     }
 
     private fun fetchJsonWithRetry(request: Request, tag: String, attempts: Int = 3): JSONObject? {
