@@ -260,23 +260,26 @@ class AniDB :
         val minEpNumber = data.episodes.minOfOrNull { it.number } ?: 0f
         val offset = if (minEpNumber > 1f) minEpNumber - 1f else 0f
 
-        // Try to extract AniDB anime ID for AniList lookup
+        // Extract AniDB anime ID from the request URL
         val animeUrl = response.request.url.toString()
         val anidbId = animeUrl.substringAfter("/anime/").substringBefore("/episodes").toIntOrNull()
 
-        // Resolve filler episodes if enabled
-        val fillerEpisodes = if (preferences.markFillers || preferences.hideFillers) {
-            resolveFillerEpisodes(anidbId, data.episodes)
-        } else {
-            emptySet()
-        }
+        // ── Single unified metadata fetch ──────────────────────────────
+        // Resolve ALL metadata (episode titles, thumbnails, descriptions,
+        // filler list, MAL ID) in ONE ani.zip call + ONE AniList call.
+        // This avoids double-fetching ani.zip which caused rate-limit
+        // failures and intermittent missing metadata.
+        val needFillers = preferences.markFillers || preferences.hideFillers
+        val needEpisodeMeta = preferences.episodeMeta || preferences.useAnilistEpTitles
 
-        // Resolve AniList episode metadata if enabled
-        val episodeMetaMap = if (preferences.episodeMeta || preferences.useAnilistEpTitles) {
-            resolveAnilistMeta(anidbId).episodeMeta
+        val resolvedMeta = if (needFillers || needEpisodeMeta) {
+            resolveAllMetadata(anidbId, data.episodes, needFillers, needEpisodeMeta)
         } else {
             null
         }
+
+        val episodeMetaMap = resolvedMeta?.episodeMeta
+        val fillerEpisodes = resolvedMeta?.fillerEpisodes ?: emptySet()
 
         val episodes = data.episodes.map { ep ->
             SEpisode.create().apply {
@@ -288,8 +291,9 @@ class AniDB :
                     adjustedNumber.toInt().toString()
                 }
 
-                // Apply AniList episode title if available
-                val epMeta = episodeMetaMap?.get(adjustedNumber)
+                // Look up metadata using the ORIGINAL episode number (not adjusted)
+                // because ani.zip keys episodes by their original number.
+                val epMeta = episodeMetaMap?.get(ep.number)
                 val anilistTitle = epMeta?.title
                 name = if (anilistTitle != null && anilistTitle.isNotBlank()) {
                     "Episode $label: $anilistTitle"
@@ -297,7 +301,7 @@ class AniDB :
                     "Episode $label"
                 }
 
-                if (ep.filler || fillerEpisodes.contains(adjustedNumber)) {
+                if (ep.filler || fillerEpisodes.contains(ep.number)) {
                     name += " (Filler)"
                 }
 
@@ -362,87 +366,42 @@ class AniDB :
         ).reversed()
     }
 
-    // ============================== Filler ================================
+    // ====================== Unified Metadata Resolver ====================
 
-    private fun resolveFillerEpisodes(anidbId: Int?, episodes: List<EpisodeDto>): Set<Float> {
-        if (anidbId == null) return emptySet()
+    /**
+     * Resolve ALL metadata in a single pass:
+     *   1. ONE ani.zip call (using anidb_id) → episode titles, thumbnails,
+     *      descriptions, anilist_id, mal_id
+     *   2. ONE AniList GraphQL call (using resolved anilist_id) → supplemental
+     *      episode titles + thumbnails
+     *   3. ONE Jikan call (using resolved mal_id) → filler episode list
+     *
+     * This replaces the previous approach of calling ani.zip TWICE (once for
+     * fillers via resolveAnizipMeta, once for episode meta via resolveAnilistMeta)
+     * which caused rate-limit failures and intermittent missing metadata.
+     */
+    private fun resolveAllMetadata(
+        anidbId: Int?,
+        episodes: List<EpisodeDto>,
+        needFillers: Boolean,
+        needEpisodeMeta: Boolean,
+    ): AnimeMeta? {
+        if (anidbId == null) return null
 
-        val meta = cachedAnimeMeta
-        if (meta != null && meta.anidbId == anidbId && meta.fillerEpisodes != null) {
-            return meta.fillerEpisodes!!
-        }
-
-        // Resolve MAL ID via ani.zip (which supports anidb_id directly)
-        val resolvedMeta = resolveAnizipMeta(anidbId)
-        val malId = resolvedMeta.malId
-        if (malId == null) {
-            cachedAnimeMeta = AnimeMeta(anidbId = anidbId, malId = null, fillerEpisodes = emptySet())
-            return emptySet()
-        }
-
-        val maxEp = episodes.maxOfOrNull { it.number } ?: Float.MAX_VALUE
-        val fillers = fetchFillerEpisodes(malId, maxEp)
-
-        cachedAnimeMeta = AnimeMeta(anidbId = anidbId, malId = malId, fillerEpisodes = fillers)
-        return fillers
-    }
-
-    private fun fetchFillerEpisodes(malId: Int, maxEpisode: Float = Float.MAX_VALUE): Set<Float> {
-        val fillerEpisodes = mutableSetOf<Float>()
-        var page = 1
-        var hasNextPage = true
-        val maxPages = 10
-
-        while (hasNextPage && page <= maxPages) {
-            val result = try {
-                jikanClient.newCall(
-                    GET("$JIKAN_API_URL/anime/$malId/episodes?page=$page"),
-                ).execute().parseAs<JikanEpisodesDto>()
-            } catch (e: Exception) {
-                Log.e("AniDB", "Failed to fetch Jikan episodes: ${e.message}")
-                break
-            }
-
-            for (ep in result.data) {
-                val num = ep.number.toFloat()
-                if (num > maxEpisode) {
-                    hasNextPage = false
-                    break
-                }
-                if (ep.filler) fillerEpisodes.add(num)
-            }
-
-            if (hasNextPage) {
-                hasNextPage = result.pagination.hasNextPage
-                page++
-            }
-        }
-
-        return fillerEpisodes
-    }
-
-    // ============================ AniList Meta ============================
-
-    private fun resolveAnilistMeta(anidbId: Int?): AnimeMeta {
-        if (anidbId == null) return AnimeMeta()
-
+        // Check cache first — if we already resolved this anime, reuse it
         val cached = cachedAnimeMeta?.takeIf { it.anidbId == anidbId && it.anilistFetched }
-        if (cached != null) return cached
+        if (cached != null && (!needFillers || cached.fillerEpisodes != null)) {
+            return cached
+        }
 
-        val meta = cachedAnimeMeta?.takeIf { it.anidbId == anidbId }
-            ?: AnimeMeta(anidbId = anidbId).also { cachedAnimeMeta = it }
-
+        val meta = AnimeMeta(anidbId = anidbId).also { cachedAnimeMeta = it }
         val episodeMeta = mutableMapOf<Float, EpisodeMeta>()
-
-        // Step 1: Fetch from ani.zip using anidb_id (NOT anilist_id!)
-        // ani.zip supports anidb_id directly and returns:
-        //   - mappings.anilist_id, mappings.mal_id (for subsequent lookups)
-        //   - episodes.{N}.title.{en,x-jat,ja} (episode titles)
-        //   - episodes.{N}.image (thumbnails)
-        //   - episodes.{N}.overview (descriptions)
         var anilistId: Int? = null
         var malId: Int? = null
 
+        // ── Step 1: Fetch from ani.zip using anidb_id ─────────────────
+        // This single call gives us: episode titles, thumbnails, overviews,
+        // AND the anilist_id/mal_id needed for subsequent AniList/Jikan calls.
         try {
             val json = fetchJsonWithRetry(
                 GET("$ANIZIP_API_URL?anidb_id=$anidbId"),
@@ -457,7 +416,7 @@ class AniDB :
                     meta.malId = malId
                 }
 
-                // Extract episode metadata
+                // Extract episode metadata — keyed by ORIGINAL episode number
                 val episodesObj = json.optJSONObject("episodes")
                 if (episodesObj != null) {
                     for (key in episodesObj.keys()) {
@@ -483,9 +442,10 @@ class AniDB :
             Log.e("AniDB", "Failed to fetch ani.zip metadata: ${e.message}")
         }
 
-        // Step 2: Fetch from AniList GraphQL using the resolved AniList ID
-        // (NOT the AniDB ID — they're different numbering systems!)
-        if (anilistId != null) {
+        // ── Step 2: Fetch from AniList GraphQL using resolved anilist_id ──
+        // Supplements episode titles + thumbnails that ani.zip might be missing.
+        // Uses the REAL AniList ID (NOT the AniDB ID — they're different!).
+        if (needEpisodeMeta && anilistId != null) {
             try {
                 val query = """
                     query media(${'$'}id: Int, ${'$'}type: MediaType) {
@@ -530,32 +490,51 @@ class AniDB :
             }
         }
 
+        // ── Step 3: Fetch filler episodes from Jikan using resolved mal_id ──
+        if (needFillers && malId != null) {
+            val maxEp = episodes.maxOfOrNull { it.number } ?: Float.MAX_VALUE
+            meta.fillerEpisodes = fetchFillerEpisodes(malId, maxEp)
+        } else {
+            meta.fillerEpisodes = emptySet()
+        }
+
         meta.episodeMeta = episodeMeta
         meta.anilistFetched = true
         return meta
     }
 
-    /**
-     * Fetch ani.zip metadata using AniDB ID directly.
-     * Returns the MAL ID for filler lookup, or null if not found.
-     */
-    private fun resolveAnizipMeta(anidbId: Int): AnimeMeta {
-        val cached = cachedAnimeMeta?.takeIf { it.anidbId == anidbId && it.anilistFetched }
-        if (cached != null) return cached
+    private fun fetchFillerEpisodes(malId: Int, maxEpisode: Float = Float.MAX_VALUE): Set<Float> {
+        val fillerEpisodes = mutableSetOf<Float>()
+        var page = 1
+        var hasNextPage = true
+        val maxPages = 10
 
-        return try {
-            val json = fetchJsonWithRetry(
-                GET("$ANIZIP_API_URL?anidb_id=$anidbId"),
-                "ani.zip",
-            )
-            val mappings = json?.optJSONObject("mappings")
-            val malId = mappings?.optInt("mal_id", 0)?.takeIf { it > 0 }
-            val anilistId = mappings?.optInt("anilist_id", 0)?.takeIf { it > 0 }
-            AnimeMeta(anidbId = anidbId, anilistId = anilistId, malId = malId)
-        } catch (e: Exception) {
-            Log.e("AniDB", "Failed to fetch ani.zip for MAL ID: ${e.message}")
-            AnimeMeta(anidbId = anidbId)
+        while (hasNextPage && page <= maxPages) {
+            val result = try {
+                jikanClient.newCall(
+                    GET("$JIKAN_API_URL/anime/$malId/episodes?page=$page"),
+                ).execute().parseAs<JikanEpisodesDto>()
+            } catch (e: Exception) {
+                Log.e("AniDB", "Failed to fetch Jikan episodes: ${e.message}")
+                break
+            }
+
+            for (ep in result.data) {
+                val num = ep.number.toFloat()
+                if (num > maxEpisode) {
+                    hasNextPage = false
+                    break
+                }
+                if (ep.filler) fillerEpisodes.add(num)
+            }
+
+            if (hasNextPage) {
+                hasNextPage = result.pagination.hasNextPage
+                page++
+            }
         }
+
+        return fillerEpisodes
     }
 
     private fun fetchJsonWithRetry(request: Request, tag: String, attempts: Int = 3): JSONObject? {
