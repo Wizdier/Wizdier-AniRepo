@@ -1,0 +1,8 @@
+ext {
+    extName = 'AniDB'
+    extClass = '.AniDB'
+    isNsfw = false
+    extVersionCode = 12
+}
+
+apply plugin: "kei.plugins.extension.legacy"

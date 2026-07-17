@@ -108,6 +108,7 @@ class CinebyExtractor(
                     addQueryParameter("episodeId", episodeId)
                     addQueryParameter("seasonId", seasonId)
                     addQueryParameter("tmdbId", pathParts[1])
+                    addQueryParameter("enc", "2")
                     if (imdbId.isNotBlank()) addQueryParameter("imdbId", imdbId)
                     if (server.language != null) {
                         addQueryParameter("language", server.language)
@@ -125,8 +126,17 @@ class CinebyExtractor(
                     GET(serverUrl.toString(), backendHeaders),
                 ).awaitSuccess().bodyString()
 
-                val requestBody = mapOf("text" to encryptedText, "id" to pathParts[1])
-                    .toJsonRequestBody()
+                // Try to extract seed from server response (some Videasy backends return JSON with seed)
+                val seed = try {
+                    val json = org.json.JSONObject(encryptedText)
+                    if (json.has("seed")) json.getString("seed") else null
+                } catch (_: Exception) { null }
+
+                val requestBody = buildMap {
+                    put("text", encryptedText)
+                    put("id", pathParts[1])
+                    seed?.let { put("seed", it) }
+                }.toJsonRequestBody()
                 val decrypted = client.newCall(POST(DECRYPTION_API_URL, body = requestBody))
                     .awaitSuccess()
                     .parseAs<VideasyDecryptionDto>()
