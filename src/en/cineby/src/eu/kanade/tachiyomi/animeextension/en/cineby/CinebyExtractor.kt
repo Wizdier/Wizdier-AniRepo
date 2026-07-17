@@ -99,21 +99,6 @@ class CinebyExtractor(
             try {
                 val seasonId = if (isMovie) "1" else pathParts[2]
                 val episodeId = if (isMovie) "1" else pathParts[3]
-                val serverUrl = server.apiBase.toHttpUrl().newBuilder().apply {
-                    addPathSegments(server.path)
-                    addPathSegment("sources-with-title")
-                    addEncodedQueryParameter("title", doubleEncode(title))
-                    addQueryParameter("mediaType", if (isMovie) "movie" else "tv")
-                    addQueryParameter("year", year)
-                    addQueryParameter("episodeId", episodeId)
-                    addQueryParameter("seasonId", seasonId)
-                    addQueryParameter("tmdbId", pathParts[1])
-                    addQueryParameter("enc", "2")
-                    if (imdbId.isNotBlank()) addQueryParameter("imdbId", imdbId)
-                    if (server.language != null) {
-                        addQueryParameter("language", server.language)
-                    }
-                }.build()
 
                 // API headers use stripped domain (Videasy expects no www.)
                 val apiOrigin = apiOrigin(baseUrl)
@@ -122,20 +107,52 @@ class CinebyExtractor(
                     .set("Origin", apiOrigin)
                     .build()
 
+                // ── NEW FLOW (2026-07-17): api.speedracelight.com requires a seed ──
+                // 1. Fetch seed from <apiBase>/seed?mediaId=<tmdbId>
+                // 2. Call <apiBase>/<server>/sources-with-title?...&enc=2&seed=<seed>
+                // 3. POST encrypted response + seed to enc-dec.app/api/dec-videasy
+                val mediaId = pathParts[1]
+
+                // Step 1: Fetch seed
+                val seedUrl = server.apiBase.toHttpUrl().newBuilder()
+                    .addPathSegment("seed")
+                    .addQueryParameter("mediaId", mediaId)
+                    .build()
+                val seedResponse = client.newCall(GET(seedUrl.toString(), backendHeaders))
+                    .awaitSuccess().bodyString()
+                val seed = try {
+                    org.json.JSONObject(seedResponse).optString("seed", "")
+                } catch (_: Exception) {
+                    ""
+                }
+
+                // Step 2: Fetch encrypted sources with seed
+                val serverUrl = server.apiBase.toHttpUrl().newBuilder().apply {
+                    addPathSegments(server.path)
+                    addPathSegment("sources-with-title")
+                    addEncodedQueryParameter("title", doubleEncode(title))
+                    addQueryParameter("mediaType", if (isMovie) "movie" else "tv")
+                    addQueryParameter("year", year)
+                    addQueryParameter("episodeId", episodeId)
+                    addQueryParameter("seasonId", seasonId)
+                    addQueryParameter("tmdbId", mediaId)
+                    addQueryParameter("enc", "2")
+                    if (seed.isNotBlank()) addQueryParameter("seed", seed)
+                    if (imdbId.isNotBlank()) addQueryParameter("imdbId", imdbId)
+                    if (server.language != null) {
+                        addQueryParameter("language", server.language)
+                    }
+                }.build()
+
                 val encryptedText = client.newCall(
                     GET(serverUrl.toString(), backendHeaders),
                 ).awaitSuccess().bodyString()
 
-                // Try to extract seed from server response (some Videasy backends return JSON with seed)
-                val seed = try {
-                    val json = org.json.JSONObject(encryptedText)
-                    if (json.has("seed")) json.getString("seed") else null
-                } catch (_: Exception) { null }
-
+                // Step 3: Decrypt via enc-dec.app
                 val requestBody = buildMap {
                     put("text", encryptedText)
-                    put("id", pathParts[1])
-                    seed?.let { put("seed", it) }
+                    put("id", mediaId)
+                    if (seed.isNotBlank()) put("seed", seed)
                 }.toJsonRequestBody()
                 val decrypted = client.newCall(POST(DECRYPTION_API_URL, body = requestBody))
                     .awaitSuccess()
@@ -380,96 +397,67 @@ class CinebyExtractor(
 
         private val qualityRegex = Regex("""(\d{3,4})[pP]?""")
 
-        //   Official servers (verified against website JS + reference table)
-        //   Neon    = mb-flix                                (api.videasy.to)
-        //   Yoru    = cdn          [MOVIE ONLY, MAY HAVE 4K] (api.videasy.to)
-        //   Cypher  = downloader2                            (api.videasy.to)
-        //   Sage    = 1movies                                (api.videasy.to)
-        //   Breach  = m4uhd                                  (api.videasy.to)
-        //   Vyse    = hdmovie      [FILTERS quality=English] (api.videasy.to)
-        //   Killjoy = meine ?lang=german  - German          (api.videasy.to)
-        //   Harbor  = meine ?lang=italian - Italian         (api.videasy.to)
-        //   Chamber = meine ?lang=french  - French [MOVIE ONLY] (api.videasy.to)
-        //   Fade    = hdmovie      [FILTERS quality=Hindi]  (api.videasy.to)
-        //   Omen    = lamovie             - Spanish          (api.videasy.to)
-        //   Raze    = superflix           - Portuguese       (api.videasy.to)
+        //   Updated 2026-07-17: API host changed from api.videasy.to to
+        //   api.speedracelight.com. Server paths verified against live JS.
+        //   Neon    = neon2                                 (api.speedracelight.com)
+        //   Yoru    = cdn          [MOVIE ONLY, MAY HAVE 4K] (api.speedracelight.com)
+        //   Breach  = m4uhd                                  (api.speedracelight.com)
+        //   Vyse    = hdmovie      [FILTERS quality=English] (api.speedracelight.com)
+        //   Killjoy = meine ?lang=german  - German          (api.speedracelight.com)
+        //   Fade    = hdmovie      [FILTERS quality=Hindi]  (api.speedracelight.com)
+        //   Omen    = lamovie             - Spanish          (api.speedracelight.com)
+        //   Raze    = superflix           - Portuguese       (api.speedracelight.com)
+        //   Removed: Cypher (downloader2), Sage (1movies), Harbor (italian), Chamber (french)
         val VIDEASY_SERVERS = listOf(
             VideasyServer(
                 "Neon",
-                "https://api.videasy.to",
-                "mb-flix",
+                "https://api.speedracelight.com",
+                "neon2",
                 audioLabel = "Original",
             ),
             VideasyServer(
                 "Yoru",
-                "https://api.videasy.to",
+                "https://api.speedracelight.com",
                 "cdn",
                 mayHave4K = true,
                 audioLabel = "Original",
             ),
             VideasyServer(
-                "Cypher",
-                "https://api.videasy.to",
-                "downloader2",
-                audioLabel = "Original",
-            ),
-            VideasyServer(
-                "Sage",
-                "https://api.videasy.to",
-                "1movies",
-                audioLabel = "Original",
-            ),
-            VideasyServer(
                 "Breach",
-                "https://api.videasy.to",
+                "https://api.speedracelight.com",
                 "m4uhd",
                 audioLabel = "Original",
             ),
             VideasyServer(
                 "Vyse",
-                "https://api.videasy.to",
+                "https://api.speedracelight.com",
                 "hdmovie",
                 qualityFilter = "English",
                 audioLabel = "Original",
             ),
             VideasyServer(
                 "Killjoy",
-                "https://api.videasy.to",
+                "https://api.speedracelight.com",
                 "meine",
                 language = "german",
                 audioLabel = "German",
             ),
             VideasyServer(
-                "Harbor",
-                "https://api.videasy.to",
-                "meine",
-                language = "italian",
-                audioLabel = "Italian",
-            ),
-            VideasyServer(
-                "Chamber",
-                "https://api.videasy.to",
-                "meine",
-                language = "french",
-                movieOnly = true,
-                audioLabel = "French",
-            ),
-            VideasyServer(
                 "Fade",
-                "https://api.videasy.to",
+                "https://api.speedracelight.com",
                 "hdmovie",
                 qualityFilter = "Hindi",
                 audioLabel = "Hindi",
             ),
             VideasyServer(
                 "Omen",
-                "https://api.videasy.to",
+                "https://api.speedracelight.com",
                 "lamovie",
                 audioLabel = "Spanish",
             ),
             VideasyServer(
                 "Raze",
-                "https://api.videasy.to",
+                "https://api.speedracelight.com",
                 "superflix",
                 audioLabel = "Portuguese",
             ),

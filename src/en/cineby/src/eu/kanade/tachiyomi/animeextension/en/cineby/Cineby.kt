@@ -800,11 +800,11 @@ class Cineby :
 
         private const val PREF_SERVERS_KEY = "pref_servers_v2"
         private val PREF_SERVERS_DEFAULT =
-            setOf("Neon", "Yoru", "Cypher", "Sage")
+            setOf("Neon", "Yoru", "Breach", "Vyse")
 
         // ============================ TMDB =============================
         private const val TMDB_HOST = "api.themoviedb.org"
-        private const val PROXY_HOST = "db.videasy.to"
+        private const val PROXY_HOST = "db.speedracelight.com"
         private const val TMDB_IMAGE_URL = "https://image.tmdb.org/t/p"
 
         // TMDB v3 keys are 32-char hex strings.
